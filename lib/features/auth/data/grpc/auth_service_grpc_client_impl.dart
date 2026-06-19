@@ -19,16 +19,16 @@ class AuthServiceGrpcClientImpl implements AuthServiceGrpcClient {
     required int port,
     bool useTls = false,
   }) : _client = auth_grpc.AuthServiceClient(
-         ClientChannel(
-           host,
-           port: port,
-           options: ChannelOptions(
-             credentials: useTls
-                 ? const ChannelCredentials.secure()
-                 : const ChannelCredentials.insecure(),
-           ),
-         ),
-       );
+          ClientChannel(
+            host,
+            port: port,
+            options: ChannelOptions(
+              credentials: useTls
+                  ? const ChannelCredentials.secure()
+                  : const ChannelCredentials.insecure(),
+            ),
+          ),
+        );
 
   @override
   Future<AuthTokensModel> exchangeExternalToken(
@@ -42,7 +42,6 @@ class AuthServiceGrpcClientImpl implements AuthServiceGrpcClient {
 
       return _client.exchangeExternalToken(grpcRequest);
     });
-
     _ensureSuccess(response, fallback: 'Token exchange failed.');
     return _toAuthTokensModel(response);
   }

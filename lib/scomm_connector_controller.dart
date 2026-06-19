@@ -133,25 +133,21 @@ class ScommConnectorController {
     final signaling = _connectController.signalingController.state;
     final webrtc = webrtcState;
 
-    final connectedRemoteUris =
-        _connectController.sessionStore.all
-            .where((session) {
-              final status = _webrtccontroller
-                  .stateOf(session.sessionId)
-                  .status;
-              return status == WebRtcStatus.connected ||
-                  status == WebRtcStatus.negotiating ||
-                  status == WebRtcStatus.retrying;
-            })
-            .map((session) => session.remoteUri)
-            .where((uri) => uri.trim().isNotEmpty)
-            .toSet()
-            .toList(growable: false)
-          ..sort();
+    final connectedRemoteUris = _connectController.sessionStore.all
+        .where((session) {
+          final status = _webrtccontroller.stateOf(session.sessionId).status;
+          return status == WebRtcStatus.connected ||
+              status == WebRtcStatus.negotiating ||
+              status == WebRtcStatus.retrying;
+        })
+        .map((session) => session.remoteUri)
+        .where((uri) => uri.trim().isNotEmpty)
+        .toSet()
+        .toList(growable: false)
+      ..sort();
 
     final selectedRemoteUri = _connectController.selectedSession?.remoteUri;
-    final activeRemoteUri =
-        selectedRemoteUri != null &&
+    final activeRemoteUri = selectedRemoteUri != null &&
             connectedRemoteUris.contains(selectedRemoteUri)
         ? selectedRemoteUri
         : (connectedRemoteUris.isNotEmpty ? connectedRemoteUris.first : null);
@@ -197,25 +193,36 @@ class ScommConnectorController {
 
   /// Authenticates the user with either IMAP credentials or an external token.
   Future<void> login(ScommLoginConfig config) async {
-    if (config is ScommTokenExchangeLoginConfig) {
-      infoLog(
-        'Starting token exchange authentication for user ${config.email} with provider ${config.provider}',
+    try {
+      if (config is ScommTokenExchangeLoginConfig) {
+        infoLog(
+          'Starting token exchange authentication for user ${config.email} with provider ${config.provider}',
+        );
+        await _authController.exchangeProviderToken(
+          provider: config.provider,
+          externalAccessToken: config.externalAccessToken,
+          email: config.email,
+        );
+      } else if (config is ScommImapLoginConfig) {
+        await _authController.exchangeImapLogin(
+          credentials: ImapCredentials(
+            username: config.email,
+            password: config.password,
+            host: config.host,
+            port: config.port,
+            useTls: config.useTls,
+          ),
+        );
+      }
+    } catch (e) {
+      print("error.............");
+      print(e);
+      errorLog(
+        'Error during login: ${e.toString()}',
       );
-      await _authController.exchangeProviderToken(
-        provider: config.provider,
-        externalAccessToken: config.externalAccessToken,
-        email: config.email,
-      );
-    } else if (config is ScommImapLoginConfig) {
-      await _authController.exchangeImapLogin(
-        credentials: ImapCredentials(
-          username: config.email,
-          password: config.password,
-          host: config.host,
-          port: config.port,
-          useTls: config.useTls,
-        ),
-      );
+      rethrow;
+    } finally {
+      _syncSessionState();
     }
   }
 
@@ -336,12 +343,13 @@ class ScommConnectorController {
     required String deviceName,
     required String deviceType,
     required DeviceMode mode,
-  }) => _identityController.updateDevice(
-    deviceId: deviceId,
-    mode: mode,
-    deviceName: deviceName,
-    deviceType: deviceType,
-  );
+  }) =>
+      _identityController.updateDevice(
+        deviceId: deviceId,
+        mode: mode,
+        deviceName: deviceName,
+        deviceType: deviceType,
+      );
 
   // Backward-compatible aliases used by runner code.
   /// Backward-compatible alias for registering the current device.
@@ -349,7 +357,8 @@ class ScommConnectorController {
     String deviceName,
     String deviceType,
     DeviceMode mode,
-  ) => registerDevice(deviceName, deviceType, mode);
+  ) =>
+      registerDevice(deviceName, deviceType, mode);
 
   /// Backward-compatible alias for loading the saved current device identity.
   Future<SavedDeviceIdentity?> loadMyDevices(String userId) =>
@@ -420,36 +429,35 @@ class ScommConnectorController {
       _dataMessageSubscriptions[activeSessionId] = _webrtccontroller
           .receivedDataMessages(activeSessionId)
           .listen((message) async {
-            if (message.channelLabel != ScommDataChannelTransport.mainChannel) {
-              return;
-            }
-            _recordReceivedPayload(message.message);
+        if (message.channelLabel != ScommDataChannelTransport.mainChannel) {
+          return;
+        }
+        _recordReceivedPayload(message.message);
 
-            // Record request routing before broadcasting to listeners to avoid
-            // races where handlers send responses immediately.
-            final earlyParsed = _datachannelController.transport.parse(
-              message.message,
-            );
-            final earlyRequestId = earlyParsed?.requestId?.trim();
-            if (earlyRequestId != null && earlyRequestId.isNotEmpty) {
-              _requestSessionByRequestId[earlyRequestId] = activeSessionId;
-            }
+        // Record request routing before broadcasting to listeners to avoid
+        // races where handlers send responses immediately.
+        final earlyParsed = _datachannelController.transport.parse(
+          message.message,
+        );
+        final earlyRequestId = earlyParsed?.requestId?.trim();
+        if (earlyRequestId != null && earlyRequestId.isNotEmpty) {
+          _requestSessionByRequestId[earlyRequestId] = activeSessionId;
+        }
 
-            final parsed = await _datachannelController.receiveRawMessage(
-              message.message,
-            );
-            final requestId = parsed?.requestId?.trim();
-            if (requestId != null && requestId.isNotEmpty) {
-              _requestSessionByRequestId[requestId] = activeSessionId;
-            }
-          });
+        final parsed = await _datachannelController.receiveRawMessage(
+          message.message,
+        );
+        final requestId = parsed?.requestId?.trim();
+        if (requestId != null && requestId.isNotEmpty) {
+          _requestSessionByRequestId[requestId] = activeSessionId;
+        }
+      });
     }
     // _boundDataSessionId = sessionId;
 
     await _iceRouteSubscription?.cancel();
-    _iceRouteSubscription = _webrtccontroller
-        .iceRoutes(sessionId)
-        .listen(_setIceRoute);
+    _iceRouteSubscription =
+        _webrtccontroller.iceRoutes(sessionId).listen(_setIceRoute);
   }
 
   /// Stops the active WebRTC session and disconnects signaling.
@@ -846,9 +854,8 @@ class ScommConnectorController {
 
     final selectedSessionId = _connectController.selectedSessionId;
     final sessionIds = _connectController.sessionStore.sessionIds;
-    final singleActiveSessionId = sessionIds.length == 1
-        ? sessionIds.first
-        : null;
+    final singleActiveSessionId =
+        sessionIds.length == 1 ? sessionIds.first : null;
     final fallbackSessionId = selectedSessionId ?? singleActiveSessionId;
 
     infoLog(
