@@ -191,35 +191,12 @@ class ScommConnectorController {
     _syncSessionState();
   }
 
-  /// Authenticates the user with either IMAP credentials or an external token.
-  Future<void> login(ScommLoginConfig config) async {
+  /// Injects an AppAuth (or other host) access token for signaling/identity calls.
+  Future<void> setAccessToken(String token, {String? userId}) async {
     try {
-      if (config is ScommTokenExchangeLoginConfig) {
-        infoLog(
-          'Starting token exchange authentication for user ${config.email} with provider ${config.provider}',
-        );
-        await _authController.exchangeProviderToken(
-          provider: config.provider,
-          externalAccessToken: config.externalAccessToken,
-          email: config.email,
-        );
-      } else if (config is ScommImapLoginConfig) {
-        await _authController.exchangeImapLogin(
-          credentials: ImapCredentials(
-            username: config.email,
-            password: config.password,
-            host: config.host,
-            port: config.port,
-            useTls: config.useTls,
-          ),
-        );
-      }
+      await _authController.setAccessToken(token, userId: userId);
     } catch (e) {
-      print("error.............");
-      print(e);
-      errorLog(
-        'Error during login: ${e.toString()}',
-      );
+      errorLog('Error during setAccessToken: ${e.toString()}');
       rethrow;
     } finally {
       _syncSessionState();
@@ -228,17 +205,6 @@ class ScommConnectorController {
 
   /// Logs out the current user and clears the active auth session.
   Future<void> logout() => _authController.logout();
-
-  /// Refreshes the backend access token using a refresh token and email.
-  Future<void> refreshAccessToken({
-    required String refreshToken,
-    required String email,
-  }) {
-    return _authController.refreshAccessToken(
-      refreshToken: refreshToken,
-      email: email,
-    );
-  }
 
   ////////// Identity methods //////////
   /// Registers the current machine as an SComm device for the logged-in user.

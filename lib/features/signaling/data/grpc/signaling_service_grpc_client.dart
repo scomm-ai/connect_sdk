@@ -1,6 +1,6 @@
 import '../../domain/entities/signaling_entities.dart';
 
-typedef SignalingAccessTokenProvider = Future<String?> Function();
+typedef ResolveSignalingAccessToken = Future<String?> Function();
 
 // abstract class SignalingServiceGrpcClient {
 //   Future<Stream<SignalingEnvelope>> connect({required String deviceId});

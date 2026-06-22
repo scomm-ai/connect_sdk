@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:fixnum/fixnum.dart' as fixnum;
 import 'package:grpc/grpc.dart';
 
+import '../../../../core/auth/signaling_access_token_provider.dart';
+import '../../../../core/di/service_locator.dart';
 import '../../../../core/errors/errors.dart';
 import '../../../../core/logging/log.dart';
 import '../../domain/entities/signaling_entities.dart';
@@ -13,7 +15,7 @@ import 'signaling_service_grpc_client.dart';
 class SignalingServiceGrpcClientImpl implements SignalingServiceGrpcClient {
   final ClientChannel _channel;
   late final signaling_grpc.SignalingServiceClient _client;
-  final SignalingAccessTokenProvider _accessTokenProvider;
+  final ResolveSignalingAccessToken _accessTokenProvider;
 
   final StreamController<SignalingEnvelope> _messagesController =
       StreamController<SignalingEnvelope>.broadcast();
@@ -118,6 +120,12 @@ class SignalingServiceGrpcClientImpl implements SignalingServiceGrpcClient {
 
           _isConnected = false;
           errorLog('Signaling gRPC stream error.', error, stackTrace);
+
+          if (error is GrpcError &&
+              (error.code == StatusCode.unauthenticated ||
+                  error.code == StatusCode.permissionDenied)) {
+            unawaited(_tryRefreshTokenAfterAuthFailure());
+          }
 
           if (!_messagesController.isClosed) {
             _messagesController.addError(_toAppError(error), stackTrace);
@@ -455,7 +463,12 @@ class SignalingServiceGrpcClientImpl implements SignalingServiceGrpcClient {
   }
 
   Future<CallOptions> _authorizedOptions() async {
-    final accessToken = await _accessTokenProvider();
+    var accessToken = await _accessTokenProvider();
+    if (accessToken == null || accessToken.isEmpty) {
+      await _tryRefreshTokenAfterAuthFailure();
+      accessToken = await _accessTokenProvider();
+    }
+
     if (accessToken == null || accessToken.isEmpty) {
       warningLog('Missing signaling access token while authorizing call.');
       throw const UnauthorizedException();
@@ -464,6 +477,18 @@ class SignalingServiceGrpcClientImpl implements SignalingServiceGrpcClient {
     return CallOptions(
       metadata: <String, String>{'authorization': 'Bearer $accessToken'},
     );
+  }
+
+  Future<void> _tryRefreshTokenAfterAuthFailure() async {
+    if (!scommDi.isRegistered<SignalingAccessTokenRefresher>()) {
+      return;
+    }
+
+    try {
+      await scommDi<SignalingAccessTokenRefresher>().refreshAccessToken();
+    } catch (error) {
+      warningLog('Signaling token refresh failed: $error');
+    }
   }
 
   AppException _toAppError(Object error) {

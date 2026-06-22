@@ -12,32 +12,25 @@ Future<void> identityDI(
   int port,
   bool useTls,
 ) async {
-  /// State
-  sl.registerLazySingleton<AuthSessionState>(AuthSessionState.new);
-
-  /// gRPC
   sl.registerLazySingleton<IdentityServiceGrpcClientImpl>(
     () => IdentityServiceGrpcClientImpl(
       host: host,
       port: port,
       useTls: useTls,
-      accessTokenProvider: () async => sl<AuthSessionState>().tokenOrNull,
+      accessTokenProvider: resolveSignalingAccessToken,
     ),
   );
 
-  /// Remote
   sl.registerLazySingleton<IdentityRemoteDataSource>(
     () => IdentityRemoteDataSourceImpl(
       grpcClient: sl<IdentityServiceGrpcClientImpl>(),
     ),
   );
 
-  /// Local
   sl.registerLazySingleton<IdentityLocalDataSource>(
     () => IdentityLocalDataSourceImpl(secureStorage: sl()),
   );
 
-  /// Repository
   sl.registerLazySingleton<IdentityRepository>(
     () => IdentityRepositoryImpl(
       remoteDataSource: sl<IdentityRemoteDataSource>(),
@@ -45,7 +38,6 @@ Future<void> identityDI(
     ),
   );
 
-  /// Controller
   sl.registerLazySingleton<IdentityController>(
     () => IdentityController(
       registerDeviceUseCase: RegisterDeviceUseCase(sl<IdentityRepository>()),
@@ -56,7 +48,6 @@ Future<void> identityDI(
       listDeviceServicesUseCase: ListDeviceServicesUseCase(sl<IdentityRepository>()),
       updateServiceUseCase: UpdateServiceUseCase(sl<IdentityRepository>()),
       deleteServiceUseCase: DeleteServiceUseCase(sl<IdentityRepository>()),
-
       listAllowUserDevicesUseCase: ListAllowUserDevicesUsecase(sl<IdentityRepository>()),
       updateAllowUserDeviceUseCase: UpdateAllowUserDeviceUsecase(sl<IdentityRepository>()),
       addAllowUserDeviceUseCase: AddAllowUserDeviceUsecase(sl<IdentityRepository>()),

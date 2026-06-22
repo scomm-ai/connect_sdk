@@ -1,20 +1,10 @@
 import 'dart:async';
 
+import 'package:scommconnector/core/auth/jwt_sub_reader.dart';
+import 'package:scommconnector/core/auth/signaling_access_token_provider.dart';
 import 'package:scommconnector/core/di/service_locator.dart';
 import 'package:scommconnector/core/logging/log.dart';
-import 'package:scommconnector/features/auth/domain/usecases/remove_last_user_usecase.dart';
 
-import '../../../../core/errors/errors.dart';
-import '../../domain/entities/auth_tokens.dart';
-import '../../domain/entities/imap_credentials.dart';
-import '../../domain/usecases/exchange_external_token_usecase.dart';
-import '../../domain/usecases/exchange_imap_credentials_usecase.dart';
-import '../../domain/usecases/get_access_token_usecase.dart';
-import '../../domain/usecases/params/exchange_external_token_params.dart';
-import '../../domain/usecases/params/exchange_imap_credentials_params.dart';
-import '../../domain/usecases/params/refresh_access_token_params.dart';
-import '../../domain/usecases/refresh_access_token_usecase.dart';
-import '../../domain/usecases/get_last_userId_usecase.dart';
 import '../state/auth_state.dart';
 
 class ScommAuthController {
@@ -26,20 +16,6 @@ class ScommAuthController {
 
   ScommAuthController._internal();
 
-  final ExchangeExternalTokenUseCase _exchangeExternalTokenUseCase =
-      scommDi<ExchangeExternalTokenUseCase>();
-  final ExchangeImapCredentialsUseCase _exchangeImapCredentialsUseCase =
-      scommDi<ExchangeImapCredentialsUseCase>();
-  final RefreshAccessTokenUseCase _refreshAccessTokenUseCase =
-      scommDi<RefreshAccessTokenUseCase>();
-  final GetAccessTokenUseCase _getAccessTokenUseCase =
-      scommDi<GetAccessTokenUseCase>();
-  final GetLastUsedUserIdUseCase _getLastUsedUserIdUseCase =
-      scommDi<GetLastUsedUserIdUseCase>();
-
-  final RemoveLastUserUsecase _removeLastUserUsecase =
-      scommDi<RemoveLastUserUsecase>();
-
   final _authStateStream = StreamController<AuthState>.broadcast();
   Stream<AuthState> get authStates => _authStateStream.stream;
 
@@ -50,189 +26,103 @@ class ScommAuthController {
 
   AuthState get state => _state;
 
-  Future<void> exchangeProviderToken({
-    required String provider,
-    required String externalAccessToken,
-    required String email,
-  }) async {
-    _setLoading();
-
-    try {
-      final tokens = await _exchangeExternalTokenUseCase(
-        ExchangeExternalTokenParams(
-          provider: provider,
-          externalAccessToken: externalAccessToken,
-          email: email,
-        ),
-      );
-      _setAuthenticated(tokens, email);
-      scommDi<AuthSessionState>().setAccessToken(tokens.accessToken);
-    } catch (error) {
-      _setFailure(error);
-      // rethrow;
+  Future<void> setAccessToken(String token, {String? userId}) async {
+    final trimmedToken = token.trim();
+    if (trimmedToken.isEmpty) {
+      throw ArgumentError('Access token must not be empty');
     }
-  }
 
-  Future<void> logout() async {
-    _notify(_state.copyWith(isLoading: false, isLoggedIn: false, error: null));
-    scommDi<AuthSessionState>().setAccessToken('');
-    await _removeLastUserUsecase.call();
-  }
+    final resolvedUserId = normalizeSignalingUserId(
+      userId ?? readJwtSub(trimmedToken) ?? '',
+    );
+    if (resolvedUserId.isEmpty) {
+      throw ArgumentError('Unable to resolve user id from access token');
+    }
 
-  Future<void> init() async {
-    infoLog('Initializing authentication state...');
-    // await _removeLastUserUsecase.call();
-    final userId = await _getLastUsedUserIdUseCase.call();
-    infoLog('Last used userId: $userId');
-    if (userId == null) {
-      _notify(
-        _state.copyWith(
-          isLoading: false,
-          isLoggedIn: false,
-          error: null,
-          clearError: true,
-        ),
-      );
-      return;
-    }
-    final token = await _getAccessToken(email: userId);
-    infoLog('Retrieved stored access token: $token');
-    if (token == null || token.isEmpty) {
-      _notify(
-        _state.copyWith(
-          isLoading: false,
-          isLoggedIn: false,
-          error: 'No stored access token found. Please log in.',
-        ),
-      );
-      return;
-    }
+    scommDi<AuthSessionState>().setSession(
+      accessToken: trimmedToken,
+      userId: resolvedUserId,
+    );
+
     _notify(
       _state.copyWith(
         isLoading: false,
         isLoggedIn: true,
         error: null,
-        email: userId,
+        email: resolvedUserId,
+        clearError: true,
       ),
     );
-    scommDi<AuthSessionState>().setAccessToken(token);
   }
 
-  Future<void> initialize(String email) async {
-    try {
-      final token = await _getAccessToken(email: email);
-      infoLog('Retrieved stored access token for $email: $token');
-      if (token == null || token.isEmpty) {
-        _notify(
-          _state.copyWith(
-            isLoading: false,
-            isLoggedIn: false,
-            error: 'No stored access token found. Please log in.',
-          ),
-        );
-        return;
+  Future<void> logout() async {
+    _notify(const AuthState.unauthenticated());
+    scommDi<AuthSessionState>().clear();
+  }
+
+  Future<void> init() async {
+    infoLog('Initializing Scomm auth session from token provider...');
+
+    if (scommDi.isRegistered<SignalingAccessTokenProvider>()) {
+      try {
+        final token =
+            await scommDi<SignalingAccessTokenProvider>().getAccessToken();
+        if (token != null && token.trim().isNotEmpty) {
+          await setAccessToken(token);
+          return;
+        }
+      } catch (error) {
+        infoLog('Token provider init failed: $error');
       }
+    }
+
+    final session = scommDi<AuthSessionState>();
+    final existingToken = session.tokenOrNull;
+    final existingUserId = session.userIdOrNull;
+    if (existingToken != null &&
+        existingToken.isNotEmpty &&
+        existingUserId != null &&
+        existingUserId.isNotEmpty) {
       _notify(
         _state.copyWith(
           isLoading: false,
           isLoggedIn: true,
           error: null,
-          email: _state.email,
+          email: existingUserId,
+          clearError: true,
         ),
       );
-      scommDi<AuthSessionState>().setAccessToken(token);
-    } on UnauthorizedException {
-      _notify(
-        _state.copyWith(
-          isLoading: false,
-          isLoggedIn: false,
-          error: 'Stored token expired. Re-authentication required.',
-        ),
-      );
-    } catch (error) {
-      _notify(
-        _state.copyWith(
-          isLoading: false,
-          isLoggedIn: false,
-          error: 'Failed to initialize authentication: ${error.toString()}',
-        ),
-      );
+      return;
     }
-  }
 
-  Future<void> exchangeImapLogin({required ImapCredentials credentials}) async {
-    _setLoading();
-    try {
-      infoLog('Exchanging IMAP credentials for tokens...');
-      final tokens = await _exchangeImapCredentialsUseCase(
-        ExchangeImapCredentialsParams(
-          provider: 'imap',
-          imapCredentials: credentials,
-          email: credentials.username,
-        ),
-      );
-      _setAuthenticated(tokens, credentials.username);
-      scommDi<AuthSessionState>().setAccessToken(tokens.accessToken);
-    } catch (error) {
-      _setFailure(error);
-      rethrow;
-    }
-  }
-
-  Future<void> refreshAccessToken({
-    required String refreshToken,
-    required String email,
-  }) async {
-    _setLoading();
-
-    try {
-      final tokens = await _refreshAccessTokenUseCase(
-        RefreshAccessTokenParams(refreshToken: refreshToken, email: email),
-      );
-      _setAuthenticated(tokens, email);
-      scommDi<AuthSessionState>().setAccessToken(tokens.accessToken);
-    } catch (error) {
-      _setFailure(error);
-      rethrow;
-    }
-  }
-
-  Future<String?> _getAccessToken({required String email}) {
-    return _getAccessTokenUseCase(email);
-  }
-
-  void _setLoading() {
-    _notify(_state.copyWith(clearError: true, isLoading: true, error: null));
-  }
-
-  void _setAuthenticated(AuthTokens tokens, String? email) {
     _notify(
       _state.copyWith(
-        clearError: true,
-        isLoading: false,
-        isLoggedIn: true,
-        error: null,
-        email: email,
-      ),
-    );
-  }
-
-  void _setFailure(Object error) {
-    _notify(
-      _state.copyWith(
-        clearError: false,
         isLoading: false,
         isLoggedIn: false,
-        error: _toUserMessage(error),
+        error: null,
+        clearError: true,
       ),
     );
   }
 
-  String _toUserMessage(Object error) {
-    if (error is AppException) {
-      return error.message;
+  /// Attempts to refresh the access token via [SignalingAccessTokenRefresher]
+  /// when registered, then updates local session state.
+  Future<bool> refreshSessionToken() async {
+    if (!scommDi.isRegistered<SignalingAccessTokenRefresher>()) {
+      return false;
     }
 
-    return 'Authentication request failed. Please try again.';
+    try {
+      final token =
+          await scommDi<SignalingAccessTokenRefresher>().refreshAccessToken();
+      if (token == null || token.trim().isEmpty) {
+        return false;
+      }
+      await setAccessToken(token);
+      return true;
+    } catch (error) {
+      infoLog('Session token refresh failed: $error');
+      return false;
+    }
   }
 }

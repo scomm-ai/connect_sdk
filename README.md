@@ -1,6 +1,8 @@
 # SComm Connector
 
-`scommconnector` is a Flutter package for connecting an app to the SComm backend. It provides authentication, device identity registration, signaling, WebRTC session handling, presence watching, and JSON message transport over a WebRTC data channel.
+> **Authentication:** Scomm no longer exchanges mailbox/IMAP credentials. Host apps inject AppAuth tokens via `SignalingAccessTokenProvider` and `ScommConnectorController.setAccessToken()`. See the stack migration guide: [../README.md](../README.md).
+
+`scommconnector` is a Flutter package for connecting an app to the SComm backend. It provides session management, device identity registration, signaling, WebRTC session handling, presence watching, and JSON message transport over a WebRTC data channel.
 
 The main public API is exported from:
 

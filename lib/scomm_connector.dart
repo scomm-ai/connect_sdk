@@ -1,4 +1,5 @@
 export 'package:scommconnector/core/errors/errors.dart';
+export 'package:scommconnector/core/auth/signaling_access_token_provider.dart';
 export 'package:scommconnector/core/di/service_locator.dart';
 export 'package:scommconnector/features/auth/auth.dart';
 export 'package:scommconnector/features/webrtc/webrtc.dart';

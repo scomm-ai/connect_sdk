@@ -14,23 +14,19 @@ Future<void> signalingDI(
 ) async {
   final client = createGrpcClient(host, port, useTls: useTls);
 
-
-  /// gRPC
   sl.registerLazySingleton<SignalingServiceGrpcClient>(
     () => SignalingServiceGrpcClientImpl(
       client,
-      () async => sl<AuthSessionState>().tokenOrNull,
+      resolveSignalingAccessToken,
     ),
   );
 
-  /// Repository
   sl.registerLazySingleton<SignalingRepository>(
     () => SignalingRepositoryImpl(
       grpcClient: sl(),
     ),
   );
 
-  /// Use cases
   sl.registerLazySingleton(() => ConnectSignalingUseCase(sl()));
   sl.registerLazySingleton(() => WatchConnectionStatusUseCase(sl()));
   sl.registerLazySingleton(() => WatchSignalingMessagesUseCase(sl()));
@@ -38,12 +34,10 @@ Future<void> signalingDI(
   sl.registerLazySingleton(() => SendSignalEnvelopeUseCase(sl()));
   sl.registerLazySingleton(() => WatchPresenceUseCase(sl()));
 
-  /// Core shared services
   sl.registerLazySingleton<IOnlineAwareResilience>(
     OnlineAwareResilience.new,
   );
 
-  /// Domain services
   sl.registerLazySingleton<ISignalingErrorClassifier>(
     SignalingErrorClassifier.new,
   );
@@ -54,7 +48,6 @@ Future<void> signalingDI(
     ConnectionHealthMonitor.new,
   );
 
-  /// Controller
   sl.registerLazySingleton<SignalingController>(
     () => SignalingController(
       connectSignalingUseCase: sl(),
