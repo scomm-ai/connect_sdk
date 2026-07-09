@@ -136,14 +136,26 @@ class ScommConnectorController {
     final connectedRemoteUris = _connectController.sessionStore.all
         .where((session) {
           final status = _webrtccontroller.stateOf(session.sessionId).status;
-          return status == WebRtcStatus.connected ||
-              status == WebRtcStatus.negotiating ||
-              status == WebRtcStatus.retrying;
+          return status == WebRtcStatus.connected;
         })
         .map((session) => session.remoteUri)
         .where((uri) => uri.trim().isNotEmpty)
         .toSet()
         .toList(growable: false)
+      ..sort();
+
+    final connectingRemoteUris = {
+      ..._connectController.pendingOutgoingRemoteUris,
+      ..._connectController.sessionStore.all
+          .where((session) {
+            final status = _webrtccontroller.stateOf(session.sessionId).status;
+            return status == WebRtcStatus.initializing ||
+                status == WebRtcStatus.negotiating ||
+                status == WebRtcStatus.retrying;
+          })
+          .map((session) => session.remoteUri)
+          .where((uri) => uri.trim().isNotEmpty),
+    }.toList(growable: false)
       ..sort();
 
     final selectedRemoteUri = _connectController.selectedSession?.remoteUri;
@@ -162,6 +174,7 @@ class ScommConnectorController {
         webRtcState: webrtc,
         activeRemoteUri: activeRemoteUri,
         connectedRemoteUris: connectedRemoteUris,
+        connectingRemoteUris: connectingRemoteUris,
       ),
     );
   }
@@ -171,6 +184,18 @@ class ScommConnectorController {
   /// Initializes cached auth state and subscribes to internal state streams.
   Future<void> initialize() async {
     await _authController.init();
+
+    _connectController.onActivityChanged = _syncSessionState;
+    _connectController.onSessionRemoved = (sessionId) {
+      unawaited(_dataMessageSubscriptions.remove(sessionId)?.cancel());
+      _requestSessionByRequestId.removeWhere((_, mapped) => mapped == sessionId);
+      if (_connectController.selectedSessionId == null) {
+        unawaited(_iceRouteSubscription?.cancel());
+        _iceRouteSubscription = null;
+        _resetTransferSpeed();
+        _setIceRoute(const WebRtcIceRoute());
+      }
+    };
 
     await _authSub?.cancel();
     await _identitySub?.cancel();
@@ -530,6 +555,13 @@ class ScommConnectorController {
           _incomingRequestCache[requestId] = request;
         }
         return request;
+      });
+
+  /// Emits when a pending incoming request was cancelled by the remote sender.
+  Stream<String> get cancelledIncomingConnectionRequests =>
+      _connectController.cancelledIncomingConnectionRequests.map((requestId) {
+        _incomingRequestCache.remove(requestId);
+        return requestId;
       });
 
   /// Emits all incoming signaling envelopes from the signaling controller.

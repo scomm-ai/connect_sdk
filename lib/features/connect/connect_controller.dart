@@ -21,7 +21,11 @@ class ConnectController {
     required this.signalingController,
     required this.webRtcController,
     required this.sessionStore,
-  });
+  }) {
+    webRtcController.onSessionEnded = (sessionId) {
+      unawaited(_cleanupSessionAfterWebRtcEnded(sessionId));
+    };
+  }
 
   StreamSubscription<SignalEnvelope>? _signalingSubscription;
   StreamSubscription<MapEntry<String, WebRtcSessionDescription>>?
@@ -31,6 +35,7 @@ class ConnectController {
   /// answer → send).  A duplicate offer that arrives before the first completes
   /// is dropped to prevent "PeerConnection is not initialized" race errors.
   final Set<String> _processingOfferSessions = {};
+  final Set<String> _pendingOutgoingRemoteUris = <String>{};
   String? _localUri;
   String? _selectedSessionId;
   List<String> _configuredDataChannels = const [];
@@ -38,13 +43,35 @@ class ConnectController {
 
   final _incomingConnectionRequests =
       StreamController<SignalEnvelope>.broadcast();
+  final _cancelledIncomingConnectionRequests =
+      StreamController<String>.broadcast();
 
   Stream<SignalEnvelope> get incomingConnectionRequests =>
       _incomingConnectionRequests.stream;
 
+  /// Emits [requestId] when a pending incoming request is cancelled remotely
+  /// (e.g. sender timed out or withdrew the request).
+  Stream<String> get cancelledIncomingConnectionRequests =>
+      _cancelledIncomingConnectionRequests.stream;
+
   bool _isSignalingStart = false;
 
   String? get selectedSessionId => _selectedSessionId;
+
+  /// Remote URIs with an outgoing request awaiting acceptance.
+  Set<String> get pendingOutgoingRemoteUris =>
+      Set<String>.unmodifiable(_pendingOutgoingRemoteUris);
+
+  /// Notifies listeners when pending outgoing connection activity changes.
+  void Function()? onActivityChanged;
+
+  /// Notifies listeners after a session is removed from the local store.
+  void Function(String sessionId)? onSessionRemoved;
+
+  void _notifyActivityChanged() => onActivityChanged?.call();
+
+  void _notifySessionRemoved(String sessionId) =>
+      onSessionRemoved?.call(sessionId);
 
   String _sessionIdFromRequestId(String requestId) => requestId;
 
@@ -111,18 +138,39 @@ class ConnectController {
   }
 
   Future<void> stopWebRtcSession(String sessionId) async {
-    final session = sessionStore.remove(sessionId);
+    final session = sessionStore.getBySessionId(sessionId);
 
     if (_selectedSessionId == sessionId) {
       _selectedSessionId = null;
     }
 
-    // Notify the remote peer before tearing down so it does not attempt
-    // ICE restart / recovery on its side.
-    await _sendDisconnectNotice(sessionId);
+    if (session != null) {
+      await _sendDisconnectNotice(
+        sessionId,
+        session: session,
+      );
+      sessionStore.remove(sessionId);
+      await session.dispose();
+      _notifySessionRemoved(sessionId);
+    }
 
     await webRtcController.close(sessionId);
-    await session?.dispose();
+    _notifyActivityChanged();
+  }
+
+  Future<void> _cleanupSessionAfterWebRtcEnded(String sessionId) async {
+    final session = sessionStore.remove(sessionId);
+    if (session == null) {
+      return;
+    }
+
+    if (_selectedSessionId == sessionId) {
+      _selectedSessionId = null;
+    }
+
+    await session.dispose();
+    _notifySessionRemoved(sessionId);
+    _notifyActivityChanged();
   }
 
   Future<void> initiateConnection({
@@ -140,35 +188,47 @@ class ConnectController {
     final requestId = _buildRequestId();
     final sessionId = _sessionIdFromRequestId(requestId);
 
-    sessionStore.save(
-      ConnectSession(
-        sessionId: sessionId,
+    _pendingOutgoingRemoteUris.add(toUri);
+    _notifyActivityChanged();
+    try {
+      await signalingController.sendConnectionRequest(
         requestId: requestId,
-        remoteUri: toUri,
-      ),
-    );
-    _selectedSessionId = sessionId;
+        fromUri: fromUri,
+        toUri: toUri,
+        serviceName: serviceName,
+        note: note,
+        timeout: timeout,
+      );
 
-    await webRtcController.initialize(
-      sessionId: sessionId,
-      dataChannels: _configuredDataChannels,
-      iceServers: _configuredIceServers,
-    );
+      sessionStore.save(
+        ConnectSession(
+          sessionId: sessionId,
+          requestId: requestId,
+          remoteUri: toUri,
+        ),
+      );
+      _selectedSessionId = sessionId;
 
-    await _bindLocalIce(sessionId);
+      try {
+        await webRtcController.initialize(
+          sessionId: sessionId,
+          dataChannels: _configuredDataChannels,
+          iceServers: _configuredIceServers,
+        );
 
-    await signalingController.sendConnectionRequest(
-      requestId: requestId,
-      fromUri: fromUri,
-      toUri: toUri,
-      serviceName: serviceName,
-      note: note,
-      timeout: timeout,
-    );
+        await _bindLocalIce(sessionId);
 
-    final offer = await webRtcController.createOffer(sessionId: sessionId);
+        final offer = await webRtcController.createOffer(sessionId: sessionId);
 
-    await _sendOffer(offer: offer, toUri: toUri, requestId: requestId);
+        await _sendOffer(offer: offer, toUri: toUri, requestId: requestId);
+      } catch (error) {
+        await stopWebRtcSession(sessionId);
+        rethrow;
+      }
+    } finally {
+      _pendingOutgoingRemoteUris.remove(toUri);
+      _notifyActivityChanged();
+    }
   }
 
   Future<void> acceptIncomingRequest({
@@ -348,13 +408,21 @@ class ConnectController {
 
         case SignalingPayloadType.connectionResponse:
           final response = envelope.connectionResponse;
-          if (response != null &&
-              response.status ==
-                  SignalingConnectionResponseStatus.disconnected) {
+          if (response == null) break;
+
+          if (response.status ==
+              SignalingConnectionResponseStatus.disconnected) {
             final sessionId = _sessionIdFromRequestId(response.requestId);
             // Mark the session before closing so WebRtcController skips recovery.
             webRtcController.markRemoteClosed(sessionId);
             await stopWebRtcSession(sessionId);
+            break;
+          }
+
+          if (response.status == SignalingConnectionResponseStatus.rejected ||
+              response.status == SignalingConnectionResponseStatus.busy ||
+              response.status == SignalingConnectionResponseStatus.blocked) {
+            _notifyIncomingRequestCancelled(response.requestId);
           }
           break;
         case SignalingPayloadType.ping:
@@ -368,6 +436,17 @@ class ConnectController {
     } catch (e) {
       infoLog('Error handling signaling envelope: $e');
     }
+  }
+
+  void _notifyIncomingRequestCancelled(String requestId) {
+    final normalized = requestId.trim();
+    if (normalized.isEmpty || _cancelledIncomingConnectionRequests.isClosed) {
+      return;
+    }
+
+    infoLog('Incoming connection request cancelled remotely: $normalized');
+    _cancelledIncomingConnectionRequests.add(normalized);
+    _notifyActivityChanged();
   }
 
   Future<void> _bindLocalIce(String sessionId) async {
@@ -456,22 +535,25 @@ class ConnectController {
   /// Skipped when the remote already closed the session (they initiated the
   /// disconnect) to avoid an unnecessary echo that could interfere with them
   /// re-establishing a new connection.
-  Future<void> _sendDisconnectNotice(String sessionId) async {
+  Future<void> _sendDisconnectNotice(
+    String sessionId, {
+    ConnectSession? session,
+  }) async {
     // Remote already knows — don't echo back.
     if (webRtcController.isRemoteClosed(sessionId)) return;
 
-    final session = sessionStore.getBySessionId(sessionId);
+    final activeSession = session ?? sessionStore.getBySessionId(sessionId);
     final localUri = _localUri;
-    if (session == null || localUri == null) return;
+    if (activeSession == null || localUri == null) return;
 
     try {
       await signalingController.sendEnvelope(
         SignalEnvelope(
           messageId: _buildRequestId(),
           from: SignalingDeviceRef(uri: localUri),
-          to: SignalingDeviceRef(uri: session.remoteUri),
+          to: SignalingDeviceRef(uri: activeSession.remoteUri),
           connectionResponse: SignalingConnectionResponse(
-            requestId: session.requestId,
+            requestId: activeSession.requestId,
             status: SignalingConnectionResponseStatus.disconnected,
           ),
         ),
@@ -626,7 +708,10 @@ class ConnectController {
     final existing = sessionStore.getByRemoteUri(toUri);
     if (existing == null) return false;
 
-    return webRtcController.stateOf(existing.sessionId).status ==
-        WebRtcStatus.connected;
+    final status = webRtcController.stateOf(existing.sessionId).status;
+    return status == WebRtcStatus.connected ||
+        status == WebRtcStatus.negotiating ||
+        status == WebRtcStatus.retrying ||
+        status == WebRtcStatus.initializing;
   }
 }

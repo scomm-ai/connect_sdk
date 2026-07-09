@@ -13,6 +13,7 @@ class ScommSessionState extends Equatable {
   final WebRtcState webRtcState;
   final String? activeRemoteUri;
   final List<String> connectedRemoteUris;
+  final List<String> connectingRemoteUris;
 
   const ScommSessionState({
     required this.isAuthenticated,
@@ -23,6 +24,7 @@ class ScommSessionState extends Equatable {
     required this.webRtcState,
     this.activeRemoteUri,
     this.connectedRemoteUris = const <String>[],
+    this.connectingRemoteUris = const <String>[],
   });
 
   bool get canStartRealtime => isAuthenticated && isDeviceRegistered;
@@ -37,6 +39,7 @@ class ScommSessionState extends Equatable {
     WebRtcState? webRtcState,
     String? activeRemoteUri,
     List<String>? connectedRemoteUris,
+    List<String>? connectingRemoteUris,
     bool clearActiveRemoteUri = false,
   }) {
     return ScommSessionState(
@@ -51,6 +54,8 @@ class ScommSessionState extends Equatable {
           : (activeRemoteUri ?? this.activeRemoteUri),
       connectedRemoteUris:
           connectedRemoteUris ?? List<String>.from(this.connectedRemoteUris),
+      connectingRemoteUris:
+          connectingRemoteUris ?? List<String>.from(this.connectingRemoteUris),
     );
   }
 
@@ -64,6 +69,7 @@ class ScommSessionState extends Equatable {
       webRtcState: WebRtcState.initial(),
       activeRemoteUri: null,
       connectedRemoteUris: const <String>[],
+      connectingRemoteUris: const <String>[],
     );
   }
 
@@ -78,6 +84,7 @@ class ScommSessionState extends Equatable {
       'webRtcState': webRtcState.toJson(),
       'activeRemoteUri': activeRemoteUri,
       'connectedRemoteUris': connectedRemoteUris,
+      'connectingRemoteUris': connectingRemoteUris,
     };
   }
 
@@ -97,6 +104,10 @@ class ScommSessionState extends Equatable {
               ?.map((item) => item.toString())
               .toList(growable: false) ??
           const <String>[],
+      connectingRemoteUris: (json['connectingRemoteUris'] as List?)
+              ?.map((item) => item.toString())
+              .toList(growable: false) ??
+          const <String>[],
     );
   }
 
@@ -110,5 +121,6 @@ class ScommSessionState extends Equatable {
         webRtcState,
         activeRemoteUri,
         connectedRemoteUris,
+        connectingRemoteUris,
       ];
 }

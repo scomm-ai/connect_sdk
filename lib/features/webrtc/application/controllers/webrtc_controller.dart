@@ -96,6 +96,10 @@ class WebRtcController {
   bool isRemoteClosed(String sessionId) =>
       _remoteClosedSessions.contains(sessionId);
 
+  /// Called after a WebRTC session is torn down locally so connect-layer
+  /// state (session store, UI) can be cleaned up.
+  void Function(String sessionId)? onSessionEnded;
+
   Stream<WebRtcIceCandidate> localIceCandidates(String sessionId) {
     return sessionManager.getOrCreate(sessionId).localIceCandidates;
   }
@@ -298,6 +302,7 @@ class WebRtcController {
       await sessionManager.closeSession(sessionId);
       _states.remove(sessionId);
       _pushAllStates();
+      onSessionEnded?.call(sessionId);
     } finally {
       _closingSessions.remove(sessionId);
     }
@@ -358,12 +363,12 @@ class WebRtcController {
               _emitState(
                 sessionId,
                 stateOf(sessionId).copyWith(
-                  status: WebRtcStatus.retrying,
-                  message: 'Connection failed. Attempting recovery...',
+                  status: WebRtcStatus.failed,
+                  message: 'Connection lost.',
                   clearError: true,
                 ),
               );
-              // _triggerRecovery(sessionId: sessionId);
+              unawaited(close(sessionId));
               break;
 
             case WebRtcConnectionState.closed:
@@ -371,6 +376,7 @@ class WebRtcController {
                 sessionId,
                 stateOf(sessionId).copyWith(status: WebRtcStatus.closed),
               );
+              unawaited(close(sessionId));
               break;
 
             case WebRtcConnectionState.newState:

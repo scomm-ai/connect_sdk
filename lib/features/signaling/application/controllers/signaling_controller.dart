@@ -180,6 +180,24 @@ class SignalingController {
       final response = await completer.future.timeout(timeout);
       _ensureConnectionAccepted(response);
     } on TimeoutException {
+      try {
+        await sendEnvelope(
+          SignalingEnvelope(
+            messageId: _buildMessageId(),
+            from: SignalingDeviceRef(uri: fromUri),
+            to: SignalingDeviceRef(uri: toUri),
+            connectionResponse: SignalingConnectionResponse(
+              requestId: requestId,
+              status: SignalingConnectionResponseStatus.rejected,
+              reason: 'Request timed out.',
+            ),
+          ),
+        );
+      } catch (error) {
+        warningLog(
+          'Failed to notify target about connection request timeout: $error',
+        );
+      }
       throw const ServerException(
         message: 'Connection timed out. Target may be offline or unreachable.',
       );

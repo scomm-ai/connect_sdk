@@ -62,6 +62,9 @@ class WebRtcPeerService {
       } else if (state ==
           RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
         _connectionStateController.add(WebRtcConnectionState.disconnected);
+      } else if (state ==
+          RTCIceConnectionState.RTCIceConnectionStateClosed) {
+        _connectionStateController.add(WebRtcConnectionState.closed);
       }
     };
 
