@@ -21,36 +21,14 @@ class LogLevel {
 
 void debugLog(String message) {
   if (!debugLogFlag) return;
-  // developer.log("🐛 DEBUG: $message", name: 'ScommConnector', level: LogLevel.debug);
-  print("🐛 DEBUG ScommConnector: $message");
 }
 
 void infoLog(String message) {
   if (!infoLogFlag) return;
-  // developer.log("ℹ️ INFO: $message", name: 'ScommConnector', level: LogLevel.info);
-  print("ℹ️ INFO ScommConnector: $message");
 }
 
 void warningLog(String message, [Object? error]) {
   if (!warningLogFlag) return;
-  // developer.log(
-  //   "⚠️ WARNING: $message",
-  //   name: 'ScommConnector',
-  //   level: LogLevel.warning,
-  //   error: error,
-  //   stackTrace: stackTrace,
-  // );
-  print("⚠️ WARNING ScommConnector: $message");
 }
 
-void errorLog(String message, [Object? error, StackTrace? stackTrace]) {
-  if (!errorLogFlag) return;
-  // developer.log(
-  //   "❌ ERROR: $message",
-  //   name: 'ScommConnector',
-  //   level: LogLevel.error,
-  //   error: error,
-  //   stackTrace: stackTrace,
-  // );
-  print("❌ ERROR ScommConnector: $message");
-}
+void errorLog(String message, [Object? error, StackTrace? stackTrace]) {}
