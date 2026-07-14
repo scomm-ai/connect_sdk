@@ -1,6 +1,6 @@
 # SComm Connector
 
-> **Authentication:** Scomm no longer exchanges mailbox/IMAP credentials. Host apps inject AppAuth tokens via `SignalingAccessTokenProvider` and `ScommConnectorController.setAccessToken()`. See the stack migration guide: [../README.md](../README.md).
+> **Authentication:** Scomm does **not** exchange mailbox/IMAP credentials. Host apps inject an AppAuth (or other) access token via `SignalingAccessTokenProvider` and/or `ScommConnectorController.setAccessToken()`. Prefer passing the **user email** as `userId` (not an opaque JWT `sub`).
 
 `scommconnector` is a Flutter package for connecting an app to the SComm backend. It provides session management, device identity registration, signaling, WebRTC session handling, presence watching, and JSON message transport over a WebRTC data channel.
 
@@ -47,6 +47,9 @@ import 'package:scommconnector/scomm_connector.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Optional: receive package logs in your app (silent by default).
+  ScommLog.setLogger(MyAppScommLogger());
+
   await runScommConnectorDI(
     'your-signaling-server-host',
     443,
@@ -62,41 +65,66 @@ Future<void> main() async {
 
 `ScommConnectorController` is a singleton, so `ScommConnectorController()` always returns the same controller instance.
 
+## Logging (opt-in)
+
+The package **never prints to the console on its own**. All internal logs go through `ScommLog`, which is a no-op until the host registers a logger.
+
+```dart
+class MyAppScommLogger implements ScommLogger {
+  @override
+  void debug(String message) => debugPrint(message);
+
+  @override
+  void info(String message) => debugPrint(message);
+
+  @override
+  void warning(String message, [Object? error, StackTrace? stackTrace]) {
+    debugPrint('WARN $message ${error ?? ''}');
+  }
+
+  @override
+  void error(String message, [Object? error, StackTrace? stackTrace]) {
+    debugPrint('ERROR $message ${error ?? ''}');
+  }
+}
+
+ScommLog.setLogger(MyAppScommLogger());
+// Later, to silence again:
+ScommLog.setLogger(null);
+```
+
 ## Authenticate A User
 
-The package supports IMAP credentials and external provider token exchange.
-
-### IMAP Login
+Inject the host AppAuth (or equivalent) access token. Always pass the **email** when you have it so device identity and URIs stay stable across restarts.
 
 ```dart
-await scomm.login(
-  ScommImapLoginConfig(
-    email: 'user@example.com',
-    password: 'imap-password',
-    host: 'imap.example.com',
-    port: 993,
-    useTls: true,
-  ),
+await scomm.setAccessToken(
+  accessToken,
+  userId: 'user@example.com', // prefer email over JWT sub
 );
 ```
 
-### Google, Outlook, Or Other Provider Token Login
+Recommended host pattern:
+
+1. Register a `SignalingAccessTokenProvider` that returns the current AppAuth token and seeds the session with the profile **email**.
+2. Optionally listen to AppAuth session changes and call `setAccessToken(token, userId: email)` again when the profile updates.
+
+Helpers:
 
 ```dart
-await scomm.login(
-  ScommTokenExchangeLoginConfig(
-    provider: 'Google',
-    externalAccessToken: accessToken,
-    email: 'user@example.com',
-  ),
-);
+looksLikeEmail('user@example.com'); // true
+normalizeSignalingUserId('User@Example.com'); // user@example.com
 ```
 
-Use `provider: 'Outlook'` for Outlook token exchange.
+Logout:
+
+```dart
+await scomm.logout();
+```
 
 ## Register Or Load A Device
 
-After authentication, register the current device once:
+Device identity is persisted **by email** (secure storage key), never by opaque JWT ids. After authentication with an email, register the current device once:
 
 ```dart
 await scomm.registerDevice(
@@ -106,7 +134,7 @@ await scomm.registerDevice(
 );
 ```
 
-Available device modes are:
+Available device modes:
 
 ```dart
 DeviceMode.unspecified
@@ -115,12 +143,14 @@ DeviceMode.provider
 DeviceMode.hybrid
 ```
 
-To reuse a saved device identity:
+To reuse a saved device identity, load with the **same email** used at register time:
 
 ```dart
 final identity = await scomm.loadMyCurrentDeviceIdentity('user@example.com');
 final deviceId = identity?.deviceId;
 ```
+
+If you pass a non-email lookup key (for example a JWT `sub`), load returns `null` and does not create a misleading registered state.
 
 You can also manage identities with:
 
@@ -138,7 +168,7 @@ await scomm.deleteDevice(deviceId);
 
 ## Start SComm Realtime
 
-Call `start` after the user is authenticated and a device id is available.
+Call `start` after the user is authenticated and a device id is available. The local URI becomes `scomm:{email}/{deviceId}`.
 
 ```dart
 await scomm.start(
@@ -189,11 +219,11 @@ scomm.stateChanges.listen((_) {
 });
 
 scomm.transferSpeeds.listen((speed) {
-  print('sent=${speed.sentBytesPerSecond}, received=${speed.receivedBytesPerSecond}');
+  // sentBytesPerSecond / receivedBytesPerSecond
 });
 
 scomm.iceRoutes.listen((route) {
-  print(route.toJson());
+  // route.toJson()
 });
 ```
 
@@ -241,6 +271,21 @@ After accepting or initiating a connection, the controller binds the selected se
 await scomm.bindSelectedSessionStreams();
 ```
 
+### Select An Existing Connected Peer
+
+Datachannel sends go to the **selected** session. To target a peer that is already connected (exact or soft URI match), without starting a new connection:
+
+```dart
+final selected = await scomm.selectSessionByRemoteUri(
+  'scomm:peer@example.com/peer-device-id',
+);
+if (!selected) {
+  // Not connected yet, or WebRTC status is not `connected`.
+}
+```
+
+Soft matching normalizes case and `scomm:` vs `scomm://` prefixes. Selection succeeds only when that session’s WebRTC status is `connected`.
+
 ## Watch Presence
 
 ```dart
@@ -249,11 +294,11 @@ await scomm.watchPresence([
 ]);
 
 scomm.presenceEvents.listen((event) {
-  print('${event.deviceUri} is ${event.status}');
+  // event.deviceUri / event.status
 });
 
 scomm.onlineDevicesStream.listen((onlineUris) {
-  print('Online devices: $onlineUris');
+  // list of online watched URIs
 });
 ```
 
@@ -285,13 +330,8 @@ scomm.scommDataChannelMessages.listen((message) async {
       );
       break;
     case ScommMessageType.response:
-      print('Response: ${message.data}');
-      break;
     case ScommMessageType.stream:
-      print('Stream chunk: ${message.data}');
-      break;
     case ScommMessageType.event:
-      print('Event: ${message.data}');
       break;
   }
 });
@@ -299,13 +339,15 @@ scomm.scommDataChannelMessages.listen((message) async {
 
 ### Send A Request
 
+Prefer selecting the peer first when more than one session may exist:
+
 ```dart
+await scomm.selectSessionByRemoteUri('scomm:peer@example.com/peer-device-id');
+
 final requestId = await scomm.sendDatachannelRequest(
   service: 'ollama',
-  action: 'generate',
-  data: {
-    'prompt': 'Hello',
-  },
+  action: 'ping',
+  data: const {},
 );
 ```
 
@@ -315,9 +357,9 @@ final requestId = await scomm.sendDatachannelRequest(
 await scomm.sendDatachannelResponse(
   requestId: requestId,
   service: 'ollama',
-  action: 'generate',
+  action: 'ping',
   data: {
-    'text': 'Hello back',
+    'available': true,
   },
 );
 ```
@@ -328,10 +370,9 @@ await scomm.sendDatachannelResponse(
 await scomm.sendDatachannelStream(
   requestId: requestId,
   service: 'ollama',
-  action: 'generate',
+  action: 'stream',
   data: {
     'chunk': 'partial text',
-    'done': false,
   },
 );
 ```
@@ -358,11 +399,11 @@ await scomm.sendMessageOverDataChannel('raw message');
 
 ```dart
 scomm.isDataChannelOpen.listen((isOpen) {
-  print('Data channel open: $isOpen');
+  // selected session data channel open?
 });
 
 scomm.scommConnectionState.listen((state) {
-  print('WebRTC connection state: $state');
+  // WebRTC connection state for selected session
 });
 ```
 
@@ -395,20 +436,14 @@ await clearCache();
 ## Typical Flow
 
 ```dart
+ScommLog.setLogger(MyAppScommLogger());
+
 await runScommConnectorDI(host, port, useTls);
 
 final scomm = ScommConnectorController();
 await scomm.initialize();
 
-await scomm.login(
-  ScommImapLoginConfig(
-    email: email,
-    password: password,
-    host: imapHost,
-    port: 993,
-    useTls: true,
-  ),
-);
+await scomm.setAccessToken(accessToken, userId: email);
 
 await scomm.registerDevice('My Device', 'desktop', DeviceMode.hybrid);
 
@@ -439,14 +474,18 @@ scomm.scommConnectionIncomingRequests.listen((request) async {
 });
 
 scomm.scommDataChannelMessages.listen((message) {
-  print(message.toJson());
+  // handle request / response / stream / event
 });
 ```
 
 ## Notes
 
 - Call `runScommConnectorDI` before creating or using `ScommConnectorController`.
-- Call `initialize` before login/start so controller streams are subscribed.
+- Call `initialize` before auth/start so controller streams are subscribed.
+- Prefer **email** for `setAccessToken(..., userId:)` and `loadMyCurrentDeviceIdentity`.
+- Device local persistence is email-keyed; using JWT `sub` for load/save will miss the saved device.
+- Package logs are silent until `ScommLog.setLogger(...)` is set.
 - `start` requires an authenticated user and a valid registered device id.
 - Connection requests and data channel messages require the signaling server to be reachable.
+- Use `selectSessionByRemoteUri` before datachannel send when targeting a specific already-connected peer.
 - TURN server credentials should come from secure configuration, not hardcoded source.
