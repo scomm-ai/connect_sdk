@@ -17,10 +17,33 @@ class ConnectSessionStore {
   }
 
   ConnectSession? getByRemoteUri(String remoteUri) {
+    final exact = _findByRemoteUri(remoteUri, soft: false);
+    if (exact != null) return exact;
+    return _findByRemoteUri(remoteUri, soft: true);
+  }
+
+  ConnectSession? _findByRemoteUri(String remoteUri, {required bool soft}) {
+    final needle = soft ? _normalizeRemoteUri(remoteUri) : remoteUri.trim();
+    if (needle.isEmpty) return null;
+
     for (final session in _sessions.values) {
-      if (session.remoteUri == remoteUri) return session;
+      final candidate = soft
+          ? _normalizeRemoteUri(session.remoteUri)
+          : session.remoteUri.trim();
+      if (candidate == needle) return session;
     }
     return null;
+  }
+
+  static String _normalizeRemoteUri(String uri) {
+    var normalized = uri.trim().toLowerCase();
+    if (normalized.startsWith('scomm://')) {
+      normalized = 'scomm:${normalized.substring('scomm://'.length)}';
+    }
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
   }
 
   List<String> get sessionIds => _sessions.keys.toList(growable: false);

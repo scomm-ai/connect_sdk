@@ -6,6 +6,8 @@ import 'package:scommconnector/features/identity/domain/usecases/remove_allow_de
 import 'package:scommconnector/features/identity/domain/usecases/update_allow_devices_usecase.dart';
 
 import '../../../../core/errors/errors.dart';
+import '../../../../core/auth/jwt_sub_reader.dart';
+import '../../../../core/logging/scomm_diag_log.dart';
 import '../../domain/entities/device_mode.dart';
 import '../../domain/entities/device_service.dart';
 import '../../domain/entities/identity_device.dart';
@@ -73,6 +75,25 @@ class IdentityController {
 
   Future<SavedDeviceIdentity?> loadSavedDeviceIdentity(String email) async {
     _setLoading();
+    ScommDiagLog.identity('load_saved_start', {
+      'lookupKey': email,
+      'looksLikeEmail': looksLikeEmail(email),
+      'priorIsRegistered': _state.isRegistered,
+      'priorDeviceId': _state.savedDeviceIdentity?.deviceId,
+    });
+
+    if (!looksLikeEmail(email)) {
+      ScommDiagLog.identity('load_saved_skipped_non_email', {
+        'lookupKey': email,
+      });
+      _state = _state.copyWith(
+        status: IdentityStatus.success,
+        clearError: true,
+        clearMessage: true,
+      );
+      _notify(_state);
+      return null;
+    }
 
     try {
       final savedIdentity = await registerDeviceUseCase.repository
@@ -87,8 +108,19 @@ class IdentityController {
         clearMessage: true,
       );
       _notify(_state);
+      ScommDiagLog.identity('load_saved_result', {
+        'lookupKey': email,
+        'found': savedIdentity != null,
+        'savedUserId': savedIdentity?.userId,
+        'savedDeviceId': savedIdentity?.deviceId,
+        'isRegistered': _state.isRegistered,
+      });
       return savedIdentity;
     } catch (error) {
+      ScommDiagLog.identity('load_saved_failed', {
+        'lookupKey': email,
+        'error': error,
+      });
       _setFailure(error);
       rethrow;
     }
@@ -100,6 +132,11 @@ class IdentityController {
     required DeviceMode mode,
   }) async {
     _setLoading();
+    ScommDiagLog.identity('register_start', {
+      'deviceName': deviceName,
+      'deviceType': deviceType,
+      'mode': mode.name,
+    });
 
     try {
       final device = await registerDeviceUseCase(
@@ -109,9 +146,15 @@ class IdentityController {
           mode: mode,
         ),
       );
+      ScommDiagLog.identity('register_ok', {
+        'deviceId': device.deviceId,
+        'userId': device.userId,
+        'deviceName': device.deviceName,
+      });
       _setDeviceSuccess(device, 'Device registered successfully');
       return device;
     } catch (error) {
+      ScommDiagLog.identity('register_failed', {'error': error});
       _setFailure(error);
       rethrow;
     }
@@ -259,11 +302,14 @@ class IdentityController {
   }
 
   void _setDeviceSuccess(IdentityDevice device, String message) {
+    final emailKey = looksLikeEmail(device.userId)
+        ? normalizeSignalingUserId(device.userId)
+        : null;
     _state = _state.copyWith(
       status: IdentityStatus.success,
       device: device,
       savedDeviceIdentity: SavedDeviceIdentity(
-        userId: device.userId,
+        userId: emailKey ?? device.userId,
         deviceId: device.deviceId,
       ),
       isRegistered: true,

@@ -32,3 +32,14 @@ String normalizeSignalingUserId(String userId) {
   }
   return trimmed;
 }
+
+/// Returns true when [value] looks like an email address (contains `@`).
+///
+/// Device identity persistence must use emails, not opaque JWT `sub` ids.
+bool looksLikeEmail(String? value) {
+  if (value == null) return false;
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return false;
+  final at = trimmed.indexOf('@');
+  return at > 0 && at < trimmed.length - 1;
+}

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:scommconnector/core/logging/log.dart';
+import 'package:scommconnector/core/logging/scomm_diag_log.dart';
 import 'package:scommconnector/features/connect/connect_session.dart';
 import 'package:scommconnector/features/connect/connect_session_store.dart';
 import 'package:scommconnector/features/webrtc/domain/entities/webrtc_ice_server_config.dart';
@@ -79,6 +80,21 @@ class ConnectController {
     final id = _selectedSessionId;
     if (id == null) return null;
     return sessionStore.getBySessionId(id);
+  }
+
+  /// Selects an existing session for [remoteUri] (exact then soft match).
+  ///
+  /// Returns false when no matching session exists. Does not create WebRTC.
+  bool selectSessionByRemoteUri(String remoteUri) {
+    final session = sessionStore.getByRemoteUri(remoteUri);
+    if (session == null) return false;
+    if (webRtcController.stateOf(session.sessionId).status !=
+        WebRtcStatus.connected) {
+      return false;
+    }
+    _selectedSessionId = session.sessionId;
+    _notifyActivityChanged();
+    return true;
   }
 
   Future<void> start({
@@ -181,6 +197,10 @@ class ConnectController {
   }) async {
     if (_shouldDropOutgoingRequest(toUri: toUri)) {
       infoLog('Dropping outgoing connection request to $toUri.');
+      ScommDiagLog.connect('outgoing_dropped', {
+        'toUri': toUri,
+        'serviceName': serviceName,
+      });
       return;
     }
 
@@ -188,9 +208,22 @@ class ConnectController {
     final requestId = _buildRequestId();
     final sessionId = _sessionIdFromRequestId(requestId);
 
+    ScommDiagLog.connect('outgoing_start', {
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'fromUri': fromUri,
+      'toUri': toUri,
+      'serviceName': serviceName,
+      'timeoutMs': timeout.inMilliseconds,
+    });
+
     _pendingOutgoingRemoteUris.add(toUri);
     _notifyActivityChanged();
     try {
+      ScommDiagLog.connect('outgoing_await_accept', {
+        'requestId': requestId,
+        'toUri': toUri,
+      });
       await signalingController.sendConnectionRequest(
         requestId: requestId,
         fromUri: fromUri,
@@ -199,6 +232,11 @@ class ConnectController {
         note: note,
         timeout: timeout,
       );
+      ScommDiagLog.connect('outgoing_accepted', {
+        'requestId': requestId,
+        'sessionId': sessionId,
+        'toUri': toUri,
+      });
 
       sessionStore.save(
         ConnectSession(
@@ -210,6 +248,10 @@ class ConnectController {
       _selectedSessionId = sessionId;
 
       try {
+        ScommDiagLog.connect('outgoing_webrtc_init', {
+          'sessionId': sessionId,
+          'channels': _configuredDataChannels.length,
+        });
         await webRtcController.initialize(
           sessionId: sessionId,
           dataChannels: _configuredDataChannels,
@@ -218,13 +260,34 @@ class ConnectController {
 
         await _bindLocalIce(sessionId);
 
+        ScommDiagLog.connect('outgoing_create_offer', {'sessionId': sessionId});
         final offer = await webRtcController.createOffer(sessionId: sessionId);
 
+        ScommDiagLog.connect('outgoing_send_offer', {
+          'sessionId': sessionId,
+          'requestId': requestId,
+          'sdpLen': offer.sdp.length,
+        });
         await _sendOffer(offer: offer, toUri: toUri, requestId: requestId);
+        ScommDiagLog.connect('outgoing_offer_sent', {
+          'sessionId': sessionId,
+          'requestId': requestId,
+        });
       } catch (error) {
+        ScommDiagLog.connect('outgoing_webrtc_failed', {
+          'sessionId': sessionId,
+          'error': error,
+        });
         await stopWebRtcSession(sessionId);
         rethrow;
       }
+    } catch (error) {
+      ScommDiagLog.connect('outgoing_failed', {
+        'requestId': requestId,
+        'toUri': toUri,
+        'error': error,
+      });
+      rethrow;
     } finally {
       _pendingOutgoingRemoteUris.remove(toUri);
       _notifyActivityChanged();
@@ -240,7 +303,19 @@ class ConnectController {
     final toUri = requestEnvelope.from?.uri;
     final request = requestEnvelope.connectionRequest;
 
+    ScommDiagLog.connect('incoming_respond_start', {
+      'accept': accept,
+      'reason': reason,
+      'fromUri': fromUri,
+      'remoteUri': toUri,
+      'hasRequest': request != null,
+    });
+
     if (toUri == null || request == null) {
+      ScommDiagLog.connect('incoming_respond_invalid', {
+        'toUri': toUri,
+        'hasRequest': request != null,
+      });
       throw StateError(
         'Incoming request is missing from uri or request payload.',
       );
@@ -249,6 +324,12 @@ class ConnectController {
     final requestId = request.requestId;
     final sessionId = _sessionIdFromRequestId(requestId);
 
+    ScommDiagLog.connect('incoming_send_response', {
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'accept': accept,
+      'toUri': toUri,
+    });
     await signalingController.sendEnvelope(
       SignalEnvelope(
         messageId: _buildRequestId(),
@@ -263,6 +344,10 @@ class ConnectController {
         ),
       ),
     );
+    ScommDiagLog.connect('incoming_response_sent', {
+      'requestId': requestId,
+      'accept': accept,
+    });
 
     if (!accept) return;
 
@@ -275,6 +360,10 @@ class ConnectController {
     );
     _selectedSessionId = sessionId;
 
+    ScommDiagLog.connect('incoming_webrtc_init', {
+      'sessionId': sessionId,
+      'channels': _configuredDataChannels.length,
+    });
     await webRtcController.initialize(
       sessionId: sessionId,
       dataChannels: _configuredDataChannels,
@@ -282,10 +371,21 @@ class ConnectController {
     );
 
     await _bindLocalIce(sessionId);
+    ScommDiagLog.connect('incoming_ready_for_offer', {
+      'sessionId': sessionId,
+      'requestId': requestId,
+      'webrtcStatus': webRtcController.stateOf(sessionId).status.name,
+    });
   }
 
   Future<void> _handleSignalingEnvelope(SignalEnvelope envelope) async {
     try {
+      ScommDiagLog.connect('envelope_received', {
+        'payloadType': envelope.payloadType.name,
+        'from': envelope.from?.uri,
+        'to': envelope.to?.uri,
+        'messageId': envelope.messageId,
+      });
       switch (envelope.payloadType) {
         case SignalingPayloadType.connectionRequest:
           final request = envelope.connectionRequest;
@@ -300,9 +400,18 @@ class ConnectController {
             infoLog(
               'Dropping incoming connection request from $remoteUri requestId=${request.requestId}.',
             );
+            ScommDiagLog.connect('incoming_request_dropped', {
+              'requestId': request.requestId,
+              'remoteUri': remoteUri,
+            });
             break;
           }
 
+          ScommDiagLog.connect('incoming_request_queued', {
+            'requestId': request?.requestId,
+            'remoteUri': remoteUri,
+            'serviceName': request?.serviceName,
+          });
           _incomingConnectionRequests.add(envelope);
           break;
 
@@ -310,10 +419,25 @@ class ConnectController {
           final remoteOffer = envelope.offer;
           final remoteUri = envelope.from?.uri;
 
-          if (remoteOffer == null || remoteUri == null) break;
+          if (remoteOffer == null || remoteUri == null) {
+            ScommDiagLog.connect('offer_ignored_incomplete', {
+              'hasOffer': remoteOffer != null,
+              'remoteUri': remoteUri,
+            });
+            break;
+          }
 
           final requestId = remoteOffer.requestId;
           final sessionId = _sessionIdFromRequestId(requestId);
+          final existingStatus = webRtcController.stateOf(sessionId).status;
+
+          ScommDiagLog.connect('offer_received', {
+            'requestId': requestId,
+            'sessionId': sessionId,
+            'remoteUri': remoteUri,
+            'existingStatus': existingStatus.name,
+            'sdpLen': remoteOffer.sdp.length,
+          });
 
           if (_shouldDropIncomingRequest(
             remoteUri: remoteUri,
@@ -322,6 +446,10 @@ class ConnectController {
             infoLog(
               'Dropping incoming offer from $remoteUri requestId=$requestId.',
             );
+            ScommDiagLog.connect('offer_dropped_policy', {
+              'requestId': requestId,
+              'sessionId': sessionId,
+            });
             break;
           }
 
@@ -332,6 +460,9 @@ class ConnectController {
             infoLog(
               'Dropping duplicate offer: offer already in progress. sessionId=$sessionId',
             );
+            ScommDiagLog.connect('offer_dropped_in_progress', {
+              'sessionId': sessionId,
+            });
             break;
           }
           _processingOfferSessions.add(sessionId);
@@ -347,12 +478,20 @@ class ConnectController {
 
             if (webRtcController.stateOf(sessionId).status ==
                 WebRtcStatus.initial) {
+              ScommDiagLog.connect('offer_init_missing_session', {
+                'sessionId': sessionId,
+              });
               await webRtcController.initialize(
                 sessionId: sessionId,
                 dataChannels: _configuredDataChannels,
                 iceServers: _configuredIceServers,
               );
               await _bindLocalIce(sessionId);
+            } else {
+              ScommDiagLog.connect('offer_reuse_session', {
+                'sessionId': sessionId,
+                'status': webRtcController.stateOf(sessionId).status.name,
+              });
             }
 
             final offer = WebRtcSessionDescription(
@@ -360,16 +499,35 @@ class ConnectController {
               sdp: remoteOffer.sdp,
             );
 
+            ScommDiagLog.connect('offer_create_answer', {
+              'sessionId': sessionId,
+            });
             final answer = await _createAnswerForIncomingOffer(
               sessionId: sessionId,
               offer: offer,
             );
 
+            ScommDiagLog.connect('offer_send_answer', {
+              'sessionId': sessionId,
+              'requestId': requestId,
+              'sdpLen': answer.sdp.length,
+            });
             await _sendAnswer(
               answer: answer,
               toUri: remoteUri,
               requestId: requestId,
             );
+            ScommDiagLog.connect('offer_answer_sent', {
+              'sessionId': sessionId,
+              'requestId': requestId,
+            });
+          } catch (error) {
+            ScommDiagLog.connect('offer_handle_failed', {
+              'sessionId': sessionId,
+              'requestId': requestId,
+              'error': error,
+            });
+            rethrow;
           } finally {
             _processingOfferSessions.remove(sessionId);
           }
@@ -380,6 +538,12 @@ class ConnectController {
           if (remoteAnswer == null) break;
 
           final sessionId = _sessionIdFromRequestId(remoteAnswer.requestId);
+          ScommDiagLog.connect('answer_received', {
+            'requestId': remoteAnswer.requestId,
+            'sessionId': sessionId,
+            'sdpLen': remoteAnswer.sdp.length,
+            'webrtcStatus': webRtcController.stateOf(sessionId).status.name,
+          });
 
           await webRtcController.setRemoteAnswer(
             sessionId: sessionId,
@@ -388,6 +552,7 @@ class ConnectController {
               sdp: remoteAnswer.sdp,
             ),
           );
+          ScommDiagLog.connect('answer_applied', {'sessionId': sessionId});
           break;
 
         case SignalingPayloadType.iceCandidate:
@@ -395,6 +560,12 @@ class ConnectController {
           if (remoteIce == null) break;
 
           final sessionId = _sessionIdFromRequestId(remoteIce.requestId);
+          ScommDiagLog.connect('ice_remote', {
+            'requestId': remoteIce.requestId,
+            'sessionId': sessionId,
+            'sdpMid': remoteIce.sdpMid,
+            'sdpMLineIndex': remoteIce.sdpMLineIndex,
+          });
 
           await webRtcController.addRemoteIceCandidate(
             sessionId: sessionId,
@@ -409,6 +580,12 @@ class ConnectController {
         case SignalingPayloadType.connectionResponse:
           final response = envelope.connectionResponse;
           if (response == null) break;
+
+          ScommDiagLog.connect('connection_response', {
+            'requestId': response.requestId,
+            'status': response.status.name,
+            'reason': response.reason,
+          });
 
           if (response.status ==
               SignalingConnectionResponseStatus.disconnected) {
@@ -435,6 +612,10 @@ class ConnectController {
       }
     } catch (e) {
       infoLog('Error handling signaling envelope: $e');
+      ScommDiagLog.connect('envelope_handler_error', {
+        'payloadType': envelope.payloadType.name,
+        'error': e,
+      });
     }
   }
 

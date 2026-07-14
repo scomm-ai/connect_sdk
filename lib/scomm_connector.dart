@@ -1,3 +1,5 @@
+export 'package:scommconnector/core/logging/scomm_logger.dart';
+export 'package:scommconnector/core/logging/scomm_diag_log.dart';
 export 'package:scommconnector/core/errors/errors.dart';
 export 'package:scommconnector/core/auth/signaling_access_token_provider.dart';
 export 'package:scommconnector/core/di/service_locator.dart';

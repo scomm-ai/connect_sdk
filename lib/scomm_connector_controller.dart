@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:scommconnector/core/logging/log.dart';
+import 'package:scommconnector/core/logging/scomm_diag_log.dart';
 import 'package:scommconnector/features/auth/auth.dart';
 import 'package:scommconnector/features/identity/identity.dart';
 import 'package:scommconnector/features/scomm_session_state.dart';
@@ -261,8 +262,10 @@ class ScommConnectorController {
       _identityController.listAllowUserDevices(deviceId: myDeviceId);
 
   /// Loads the locally saved device identity for the given user id or email.
-  Future<SavedDeviceIdentity?> loadMyCurrentDeviceIdentity(String userId) =>
-      _identityController.loadSavedDeviceIdentity(userId);
+  Future<SavedDeviceIdentity?> loadMyCurrentDeviceIdentity(String userId) {
+    ScommDiagLog.identity('pkg_load_my_current', {'lookupKey': userId});
+    return _identityController.loadSavedDeviceIdentity(userId);
+  }
 
   /// Lists all devices registered for the current user.
   Future<List<IdentityDevice>> listMyDevices() =>
@@ -580,19 +583,35 @@ class ScommConnectorController {
     );
   }
 
+  /// Selects an already-open session matching [remoteUri] for datachannel send.
+  ///
+  /// Returns false when that peer is not in the local session store.
+  /// Does not initiate a new connection.
+  Future<bool> selectSessionByRemoteUri(String remoteUri) async {
+    final selected = _connectController.selectSessionByRemoteUri(remoteUri);
+    if (!selected) return false;
+    await bindSelectedSessionStreams();
+    return true;
+  }
+
   /// Sends a structured request message and returns the request id used.
   Future<String> sendDatachannelRequest({
     required String service,
     required String action,
     required Map<String, dynamic> data,
     String? requestId,
-  }) {
-    return _datachannelController.sendRequest(
+  }) async {
+    final id = await _datachannelController.sendRequest(
       service: service,
       action: action,
       data: data,
       requestId: requestId,
     );
+    final sessionId = _connectController.selectedSessionId;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      _requestSessionByRequestId[id] = sessionId;
+    }
+    return id;
   }
 
   /// Sends a structured response routed to the session that sent the request.
@@ -675,8 +694,16 @@ class ScommConnectorController {
 
   /// Accepts a cached incoming connection request and binds its session streams.
   Future<void> acceptConnectionRequest(String requestId) async {
+    ScommDiagLog.connect('pkg_accept_start', {
+      'requestId': requestId,
+      'cacheHit': _incomingRequestCache.containsKey(requestId),
+      'cacheSize': _incomingRequestCache.length,
+    });
     final request = _incomingRequestCache.remove(requestId);
     if (request == null) {
+      ScommDiagLog.connect('pkg_accept_unknown_request', {
+        'requestId': requestId,
+      });
       throw StateError('Unknown requestId: $requestId');
     }
 
@@ -686,6 +713,10 @@ class ScommConnectorController {
     );
 
     await bindSelectedSessionStreams();
+    ScommDiagLog.connect('pkg_accept_done', {
+      'requestId': requestId,
+      'selectedSessionId': _connectController.selectedSessionId,
+    });
   }
 
   /// Rejects a cached incoming connection request with an optional reason.
@@ -693,8 +724,16 @@ class ScommConnectorController {
     String requestId, {
     String reason = '',
   }) async {
+    ScommDiagLog.connect('pkg_reject_start', {
+      'requestId': requestId,
+      'reason': reason,
+      'cacheHit': _incomingRequestCache.containsKey(requestId),
+    });
     final request = _incomingRequestCache.remove(requestId);
     if (request == null) {
+      ScommDiagLog.connect('pkg_reject_unknown_request', {
+        'requestId': requestId,
+      });
       throw StateError('Unknown requestId: $requestId');
     }
 

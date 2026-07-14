@@ -4,6 +4,7 @@ import 'package:scommconnector/features/webrtc/application/webrtc_manager.dart';
 
 import '../../../../core/errors/errors.dart';
 import '../../../../core/logging/log.dart';
+import '../../../../core/logging/scomm_diag_log.dart';
 import '../../../../core/resilience/online_aware_resilience.dart';
 import '../../domain/entities/webrtc_connection_state.dart';
 import '../../domain/entities/webrtc_data_message.dart';
@@ -128,6 +129,11 @@ class WebRtcController {
     infoLog(
       'WebRTC initialize requested. sessionId=$sessionId channels=${dataChannels.length}',
     );
+    ScommDiagLog.connect('webrtc_initialize_start', {
+      'sessionId': sessionId,
+      'channels': dataChannels.length,
+      'priorStatus': stateOf(sessionId).status.name,
+    });
 
     _emitState(
       sessionId,
@@ -157,6 +163,10 @@ class WebRtcController {
       );
 
       infoLog('WebRTC initialized. sessionId=$sessionId');
+      ScommDiagLog.connect('webrtc_initialize_ok', {
+        'sessionId': sessionId,
+        'status': stateOf(sessionId).status.name,
+      });
     } catch (error) {
       _emitState(
         sessionId,
@@ -166,6 +176,10 @@ class WebRtcController {
         ),
       );
       errorLog('WebRTC initialization failed. sessionId=$sessionId', error);
+      ScommDiagLog.connect('webrtc_initialize_failed', {
+        'sessionId': sessionId,
+        'error': error,
+      });
       rethrow;
     }
   }
@@ -281,6 +295,10 @@ class WebRtcController {
 
   Future<void> close(String sessionId) async {
     infoLog('WebRTC close requested. sessionId=$sessionId');
+    ScommDiagLog.connect('webrtc_close_start', {
+      'sessionId': sessionId,
+      'priorStatus': stateOf(sessionId).status.name,
+    });
     _closingSessions.add(sessionId);
     _recoveryAttemptCounts.remove(sessionId);
     _remoteClosedSessions.remove(sessionId);
@@ -303,6 +321,7 @@ class WebRtcController {
       _states.remove(sessionId);
       _pushAllStates();
       onSessionEnded?.call(sessionId);
+      ScommDiagLog.connect('webrtc_close_done', {'sessionId': sessionId});
     } finally {
       _closingSessions.remove(sessionId);
     }
@@ -333,6 +352,13 @@ class WebRtcController {
         .listen((connectionState) {
           if (_closingSessions.contains(sessionId)) return;
 
+          final priorStatus = stateOf(sessionId).status;
+          ScommDiagLog.connect('webrtc_pc_state', {
+            'sessionId': sessionId,
+            'pcState': connectionState.name,
+            'priorStatus': priorStatus.name,
+          });
+
           switch (connectionState) {
             case WebRtcConnectionState.connected:
               _recoveryAttemptCounts.remove(sessionId);
@@ -345,9 +371,16 @@ class WebRtcController {
                   clearError: true,
                 ),
               );
+              ScommDiagLog.connect('webrtc_connected', {
+                'sessionId': sessionId,
+              });
               break;
 
             case WebRtcConnectionState.disconnected:
+              ScommDiagLog.connect('webrtc_disconnected_closing', {
+                'sessionId': sessionId,
+                'priorStatus': priorStatus.name,
+              });
               _emitState(
                 sessionId,
                 stateOf(sessionId).copyWith(
@@ -360,6 +393,10 @@ class WebRtcController {
               break;
 
             case WebRtcConnectionState.failed:
+              ScommDiagLog.connect('webrtc_failed_closing', {
+                'sessionId': sessionId,
+                'priorStatus': priorStatus.name,
+              });
               _emitState(
                 sessionId,
                 stateOf(sessionId).copyWith(
@@ -372,6 +409,10 @@ class WebRtcController {
               break;
 
             case WebRtcConnectionState.closed:
+              ScommDiagLog.connect('webrtc_closed_closing', {
+                'sessionId': sessionId,
+                'priorStatus': priorStatus.name,
+              });
               _emitState(
                 sessionId,
                 stateOf(sessionId).copyWith(status: WebRtcStatus.closed),

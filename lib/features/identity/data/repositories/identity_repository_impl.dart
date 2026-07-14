@@ -3,6 +3,9 @@ import '../../domain/entities/device_service.dart';
 import '../../domain/entities/identity_device.dart';
 import '../../domain/entities/saved_device_identity.dart';
 import '../../domain/repositories/identity_repository.dart';
+import '../../../../core/auth/jwt_sub_reader.dart';
+import '../../../../core/di/service_locator.dart';
+import '../../../../core/logging/scomm_diag_log.dart';
 import '../datasources/local/identity_local_datasource.dart';
 import '../datasources/remote/identity_remote_datasource.dart';
 
@@ -14,6 +17,25 @@ class IdentityRepositoryImpl implements IdentityRepository {
     required this.remoteDataSource,
     required this.localDataSource,
   });
+
+  /// Device identity is always keyed by email, never by opaque JWT ids.
+  String? _resolveEmailStorageKey(String? candidate) {
+    final normalizedCandidate = normalizeSignalingUserId(candidate ?? '');
+    if (looksLikeEmail(normalizedCandidate)) {
+      return normalizedCandidate;
+    }
+
+    if (scommDi.isRegistered<AuthSessionState>()) {
+      final sessionUserId = normalizeSignalingUserId(
+        scommDi<AuthSessionState>().userIdOrNull ?? '',
+      );
+      if (looksLikeEmail(sessionUserId)) {
+        return sessionUserId;
+      }
+    }
+
+    return null;
+  }
 
   @override
   Future<IdentityDevice> registerDevice({
@@ -27,8 +49,21 @@ class IdentityRepositoryImpl implements IdentityRepository {
       mode: mode,
     );
     final device = response.toEntity();
+    final persistKey = _resolveEmailStorageKey(device.userId);
+    ScommDiagLog.identity('repo_register_persist', {
+      'deviceId': device.deviceId,
+      'deviceUserId': device.userId,
+      'persistKey': persistKey,
+      'note': 'persist_key_must_be_email',
+    });
+    if (persistKey == null) {
+      throw StateError(
+        'Cannot persist device identity without an email. '
+        'Got userId="${device.userId}".',
+      );
+    }
     await localDataSource.saveRegisteredDeviceIdentity(
-      userId: device.userId,
+      userId: persistKey,
       deviceId: device.deviceId,
     );
     return device;
@@ -36,12 +71,22 @@ class IdentityRepositoryImpl implements IdentityRepository {
 
   @override
   Future<SavedDeviceIdentity?> loadSavedDeviceIdentity(String userId) async {
-    final saved = await localDataSource.loadRegisteredDeviceIdentity(userId);
+    final emailKey = _resolveEmailStorageKey(userId);
+    ScommDiagLog.identity('repo_load_saved', {
+      'lookupKey': userId,
+      'emailKey': emailKey,
+      'note': 'load_requires_email',
+    });
+    if (emailKey == null) {
+      return null;
+    }
+
+    final saved = await localDataSource.loadRegisteredDeviceIdentity(emailKey);
     if (saved == null) {
       return null;
     }
 
-    return SavedDeviceIdentity(userId: saved.userId, deviceId: saved.deviceId);
+    return SavedDeviceIdentity(userId: emailKey, deviceId: saved.deviceId);
   }
 
   @override

@@ -32,8 +32,9 @@ class ScommAuthController {
       throw ArgumentError('Access token must not be empty');
     }
 
-    final resolvedUserId = normalizeSignalingUserId(
-      userId ?? readJwtSub(trimmedToken) ?? '',
+    final resolvedUserId = _resolvePreferredUserId(
+      explicitUserId: userId,
+      token: trimmedToken,
     );
     if (resolvedUserId.isEmpty) {
       throw ArgumentError('Unable to resolve user id from access token');
@@ -55,6 +56,28 @@ class ScommAuthController {
     );
   }
 
+  /// Prefer email identities over opaque JWT `sub` values.
+  String _resolvePreferredUserId({
+    required String? explicitUserId,
+    required String token,
+  }) {
+    final fromArg = normalizeSignalingUserId(explicitUserId ?? '');
+    final fromSession = normalizeSignalingUserId(
+      scommDi<AuthSessionState>().userIdOrNull ?? '',
+    );
+    final fromJwt = normalizeSignalingUserId(readJwtSub(token) ?? '');
+
+    if (looksLikeEmail(fromArg)) return fromArg;
+    if (looksLikeEmail(fromSession)) return fromSession;
+    if (looksLikeEmail(fromJwt)) return fromJwt;
+
+    // Fall back for signaling-only contexts, but identity load/save will refuse
+    // non-email keys.
+    if (fromArg.isNotEmpty) return fromArg;
+    if (fromSession.isNotEmpty) return fromSession;
+    return fromJwt;
+  }
+
   Future<void> logout() async {
     _notify(const AuthState.unauthenticated());
     scommDi<AuthSessionState>().clear();
@@ -68,7 +91,10 @@ class ScommAuthController {
         final token =
             await scommDi<SignalingAccessTokenProvider>().getAccessToken();
         if (token != null && token.trim().isNotEmpty) {
-          await setAccessToken(token);
+          // Token providers (e.g. AppAuth) may already seed AuthSessionState with
+          // the profile email before returning the token — prefer that over JWT sub.
+          final sessionUserId = scommDi<AuthSessionState>().userIdOrNull;
+          await setAccessToken(token, userId: sessionUserId);
           return;
         }
       } catch (error) {
@@ -118,7 +144,10 @@ class ScommAuthController {
       if (token == null || token.trim().isEmpty) {
         return false;
       }
-      await setAccessToken(token);
+      final sessionUserId = scommDi.isRegistered<AuthSessionState>()
+          ? scommDi<AuthSessionState>().userIdOrNull
+          : null;
+      await setAccessToken(token, userId: sessionUserId);
       return true;
     } catch (error) {
       infoLog('Session token refresh failed: $error');
