@@ -30,3 +30,10 @@ doc/api/
 
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Native libdatachannel build output
+native/build/
+src/../build/
+build/
+third_party/libdatachannel/build/
+third_party/mbedtls/

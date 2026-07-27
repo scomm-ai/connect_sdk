@@ -2,7 +2,7 @@
 
 > **Authentication:** Scomm does **not** exchange mailbox/IMAP credentials. Host apps inject an AppAuth (or other) access token via `SignalingAccessTokenProvider` and/or `ScommConnectorController.setAccessToken()`. Prefer passing the **user email** as `userId` (not an opaque JWT `sub`).
 
-`scommconnector` is a Flutter package for connecting an app to the SComm backend. It provides session management, device identity registration, signaling, WebRTC session handling, presence watching, and JSON message transport over a WebRTC data channel.
+`scommconnector` is a Flutter package for connecting an app to the SComm backend. It provides session management, device identity registration, signaling, WebRTC session handling (via **libdatachannel** FFI), presence watching, and JSON message transport over a WebRTC data channel.
 
 The main public API is exported from:
 
@@ -35,6 +35,39 @@ Then run:
 ```sh
 flutter pub get
 ```
+
+## Native WebRTC (libdatachannel FFI)
+
+This package is a Flutter **FFI plugin**. It builds and bundles
+[libdatachannel](https://github.com/idrto/libdatachannel) for:
+
+| Platform | Artifact |
+|----------|----------|
+| Android  | `libdatachannel.so` (CMake / NDK) |
+| Windows  | `datachannel.dll` (CMake) |
+| Linux    | `libdatachannel.so` (CMake) |
+| iOS / macOS | static `libdatachannel.a` via CocoaPods script |
+
+After changing native code:
+
+```sh
+flutter clean
+flutter pub get
+flutter run
+```
+
+### Optional desktop helper build
+
+```powershell
+git submodule update --init --recursive
+.\tool\build_libdatachannel.ps1
+```
+
+Override the library path with `LIBDATACHANNEL_PATH` if needed.
+
+### Branch
+
+Development for this migration lives on `feature/libdatachannel-ffi`.
 
 ## Basic Setup
 

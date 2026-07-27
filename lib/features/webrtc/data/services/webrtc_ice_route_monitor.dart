@@ -1,8 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter_webrtc/flutter_webrtc.dart';
-
 import '../../domain/entities/webrtc_ice_route.dart';
+import '../native/libdatachannel_peer_connection.dart';
 import 'webrtc_ice_route_stats_parser.dart';
 
 class WebRtcIceRouteMonitor {
@@ -18,20 +17,23 @@ class WebRtcIceRouteMonitor {
   Stream<WebRtcIceRoute> get routes => _controller.stream;
   WebRtcIceRoute get current => _current;
 
-  void start(RTCPeerConnection pc) {
+  void start(LibDataChannelPeerConnection pc) {
     stop();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(refresh(pc));
     });
   }
 
-  Future<WebRtcIceRoute> refresh(RTCPeerConnection pc) async {
+  Future<WebRtcIceRoute> refresh(LibDataChannelPeerConnection pc) async {
     if (_refreshInFlight) return _current;
 
     _refreshInFlight = true;
     try {
-      final reports = await pc.getStats();
-      final next = _parser.parse(reports);
+      final pair = pc.selectedCandidatePair();
+      final next = _parser.parseCandidatePair(
+        localCandidate: pair?.local,
+        remoteCandidate: pair?.remote,
+      );
       if (_current != next) {
         _current = next;
         if (!_controller.isClosed) {

@@ -1,83 +1,29 @@
-import 'package:flutter_webrtc/flutter_webrtc.dart';
-
 import '../../domain/entities/webrtc_ice_route.dart';
 
+/// Parses ICE route info from libdatachannel selected candidate pair strings.
 class WebRtcIceRouteStatsParser {
   const WebRtcIceRouteStatsParser();
 
-  WebRtcIceRoute parse(List<StatsReport> reports) {
-    if (reports.isEmpty) {
+  WebRtcIceRoute parseCandidatePair({
+    String? localCandidate,
+    String? remoteCandidate,
+  }) {
+    if ((localCandidate == null || localCandidate.isEmpty) &&
+        (remoteCandidate == null || remoteCandidate.isEmpty)) {
       return const WebRtcIceRoute();
     }
 
-    final reportsById = <String, StatsReport>{
-      for (final report in reports) report.id: report,
-    };
-
-    final selectedPairId = _findSelectedPairId(reports);
-    final candidatePair = selectedPairId == null
-        ? _findSelectedCandidatePair(reports)
-        : reportsById[selectedPairId] ?? _findSelectedCandidatePair(reports);
-    if (candidatePair == null) {
-      return const WebRtcIceRoute();
-    }
-
-    final localCandidateId = _asString(
-      candidatePair.values['localCandidateId'],
-    );
-    final remoteCandidateId = _asString(
-      candidatePair.values['remoteCandidateId'],
-    );
-    final localCandidate = localCandidateId == null
-        ? null
-        : reportsById[localCandidateId];
-    final remoteCandidate = remoteCandidateId == null
-        ? null
-        : reportsById[remoteCandidateId];
-
-    final localType = _parseCandidateType(
-      localCandidate?.values['candidateType'],
-    );
-    final remoteType = _parseCandidateType(
-      remoteCandidate?.values['candidateType'],
-    );
+    final localType = _parseCandidateTypeFromSdp(localCandidate);
+    final remoteType = _parseCandidateTypeFromSdp(remoteCandidate);
 
     return WebRtcIceRoute(
       routeType: _classifyRoute(localType, remoteType),
       localCandidateType: localType,
       remoteCandidateType: remoteType,
-      localProtocol: _asString(localCandidate?.values['protocol']),
-      remoteProtocol: _asString(remoteCandidate?.values['protocol']),
-      candidatePairId: candidatePair.id,
+      localProtocol: _parseProtocol(localCandidate),
+      remoteProtocol: _parseProtocol(remoteCandidate),
+      candidatePairId: _pairId(localCandidate, remoteCandidate),
     );
-  }
-
-  String? _findSelectedPairId(List<StatsReport> reports) {
-    for (final report in reports) {
-      if (report.type != 'transport') {
-        continue;
-      }
-      final selectedPairId = _asString(
-        report.values['selectedCandidatePairId'],
-      );
-      if (selectedPairId != null && selectedPairId.isNotEmpty) {
-        return selectedPairId;
-      }
-    }
-    return null;
-  }
-
-  StatsReport? _findSelectedCandidatePair(List<StatsReport> reports) {
-    for (final report in reports) {
-      if (report.type != 'candidate-pair') {
-        continue;
-      }
-      if (_asBool(report.values['selected']) ||
-          _asBool(report.values['nominated'])) {
-        return report;
-      }
-    }
-    return null;
   }
 
   WebRtcIceRouteType _classifyRoute(
@@ -104,8 +50,38 @@ class WebRtcIceRouteStatsParser {
     return WebRtcIceRouteType.unknown;
   }
 
+  WebRtcIceCandidateType _parseCandidateTypeFromSdp(String? candidate) {
+    if (candidate == null || candidate.isEmpty) {
+      return WebRtcIceCandidateType.unknown;
+    }
+
+    // candidate:... typ host/srflx/prflx/relay ...
+    final match = RegExp(
+      r'\btyp\s+(host|srflx|prflx|relay)\b',
+      caseSensitive: false,
+    ).firstMatch(candidate);
+    return _parseCandidateType(match?.group(1));
+  }
+
+  String? _parseProtocol(String? candidate) {
+    if (candidate == null || candidate.isEmpty) return null;
+    final match = RegExp(
+      r'\b(udp|tcp)\b',
+      caseSensitive: false,
+    ).firstMatch(candidate);
+    return match?.group(1)?.toLowerCase();
+  }
+
+  String? _pairId(String? local, String? remote) {
+    if ((local == null || local.isEmpty) &&
+        (remote == null || remote.isEmpty)) {
+      return null;
+    }
+    return '${local ?? ''}|${remote ?? ''}';
+  }
+
   WebRtcIceCandidateType _parseCandidateType(Object? rawValue) {
-    final normalized = _asString(rawValue)?.toLowerCase().trim();
+    final normalized = rawValue?.toString().toLowerCase().trim();
     switch (normalized) {
       case 'host':
         return WebRtcIceCandidateType.host;
@@ -118,29 +94,5 @@ class WebRtcIceRouteStatsParser {
       default:
         return WebRtcIceCandidateType.unknown;
     }
-  }
-
-  bool _asBool(Object? value) {
-    if (value is bool) {
-      return value;
-    }
-    if (value is num) {
-      return value != 0;
-    }
-    if (value is String) {
-      final normalized = value.toLowerCase().trim();
-      return normalized == 'true' || normalized == '1';
-    }
-    return false;
-  }
-
-  String? _asString(Object? value) {
-    if (value == null) {
-      return null;
-    }
-    if (value is String) {
-      return value;
-    }
-    return value.toString();
   }
 }

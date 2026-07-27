@@ -114,7 +114,7 @@ packages:
     source: hosted
     version: "2.0.8"
   ffi:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: ffi
       sha256: "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45"
@@ -203,15 +203,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_webrtc:
-    dependency: "direct main"
-    description:
-      path: "."
-      ref: main
-      resolved-ref: "7515fc146d3e960de952d407f597a30a739047ff"
-      url: "https://github.com/advforks/flutter-webrtc.git"
-    source: git
-    version: "1.4.1"
   frontend_server_client:
     dependency: transitive
     description:
@@ -316,14 +307,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.1.0"
-  logger:
-    dependency: transitive
-    description:
-      name: logger
-      sha256: "25aee487596a6257655a1e091ec2ae66bc30e7af663592cc3a27e6591e05035c"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.7.0"
   logging:
     dependency: transitive
     description:
@@ -769,14 +752,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.1"
-  webrtc_interface:
-    dependency: transitive
-    description:
-      name: webrtc_interface
-      sha256: c6f100eac5057d9a817a60473126f9828c796d42884d498af4f339c97b21014f
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.5.1"
   win32:
     dependency: transitive
     description:

@@ -1,0 +1,61 @@
+group = "ai.scomm.scommconnector"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.7.3")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "ai.scomm.scommconnector"
+
+    compileSdk = 36
+    ndkVersion = android.ndkVersion
+
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        minSdk = 24
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -frtti -fexceptions"
+                arguments "-DANDROID_STL=c++_shared",
+                        "-DNO_MEDIA=ON",
+                        "-DNO_WEBSOCKET=ON",
+                        "-DUSE_MBEDTLS=ON",
+                        "-DNO_EXAMPLES=ON",
+                        "-DNO_TESTS=ON"
+            }
+        }
+
+        ndk {
+            // Match secMail10 / openssl-dart supported ABIs.
+            abiFilters "arm64-v8a", "x86_64"
+        }
+    }
+}

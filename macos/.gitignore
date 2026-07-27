@@ -1,0 +1,9 @@
+.idea/
+.symlinks/
+Flutter/
+Flutter.framework/
+Flutter.podspec
+.flutter-plugins
+.flutter-plugins-dependencies
+**/DerivedData/
+**/Pods/
