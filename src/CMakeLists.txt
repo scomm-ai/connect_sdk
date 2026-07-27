@@ -97,6 +97,13 @@ set(BUILD_SHARED_LIBS ${SCOMM_BUILD_SHARED} CACHE BOOL "" FORCE)
 # Keep in sync with .gitmodules pin for third_party/libdatachannel.
 set(SCOMM_LIBDATACHANNEL_GIT_TAG "44d33ca70ab95e814dd9afe614adb4246479f4e2")
 set(_scomm_ldc_via_fetch FALSE)
+
+# Skip libdatachannel install()/install(EXPORT) during generate. Static Apple builds
+# link scomm_mbedtls_iface into datachannel's export graph; that INTERFACE target is
+# intentionally not exported, and Flutter bundles the archive itself.
+set(_scomm_prev_skip_install_rules "${CMAKE_SKIP_INSTALL_RULES}")
+set(CMAKE_SKIP_INSTALL_RULES ON)
+
 if(NOT EXISTS "${LIBDATACHANNEL_SRC}/CMakeLists.txt")
   message(STATUS
     "third_party/libdatachannel missing — fetching ${SCOMM_LIBDATACHANNEL_GIT_TAG} "
@@ -126,6 +133,8 @@ if(NOT _scomm_ldc_via_fetch)
     "${CMAKE_CURRENT_BINARY_DIR}/libdatachannel"
   )
 endif()
+
+set(CMAKE_SKIP_INSTALL_RULES "${_scomm_prev_skip_install_rules}")
 
 # CMake regenerates cmake_install.cmake during the generate phase, so overwrite
 # vendored install scripts on every build (before Flutter's INSTALL step).
