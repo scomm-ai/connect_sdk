@@ -127,11 +127,26 @@ if(NOT _scomm_ldc_via_fetch)
   )
 endif()
 
+# CMake regenerates cmake_install.cmake during the generate phase, so overwrite
+# vendored install scripts on every build (before Flutter's INSTALL step).
+set(_scomm_empty_install "${SCOMM_NATIVE_ROOT}/empty_install.cmake")
+add_custom_target(scomm_neuter_native_install ALL
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_scomm_empty_install}"
+    "${CMAKE_CURRENT_BINARY_DIR}/mbedtls/cmake_install.cmake"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_scomm_empty_install}"
+    "${CMAKE_CURRENT_BINARY_DIR}/libdatachannel/cmake_install.cmake"
+  COMMENT "Disable mbedtls/libdatachannel install rules for Flutter bundling"
+  VERBATIM
+)
+
 if(NOT TARGET datachannel)
   message(FATAL_ERROR "libdatachannel did not create target 'datachannel'")
 endif()
 
 set_target_properties(datachannel PROPERTIES OUTPUT_NAME "datachannel")
+add_dependencies(scomm_neuter_native_install datachannel)
 
 # Ensure Mbed TLS libs build before linking datachannel on VS multi-config.
 foreach(_mbed_dep IN ITEMS mbedtls mbedx509 mbedcrypto everest p256m)
