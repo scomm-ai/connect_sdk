@@ -53,6 +53,11 @@ endif()
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+# Flutter desktop sets CMAKE_INSTALL_PREFIX to $<TARGET_FILE_DIR:...>, which
+# third-party install() rules treat as a literal path and fail. We only need
+# the built shared library via bundled_libraries — neutralize vendored install.
+set(INSTALL_MBEDTLS_HEADERS OFF CACHE BOOL "" FORCE)
+set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
 add_subdirectory("${MBEDTLS_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls")
 
 foreach(_mbed_tgt IN ITEMS mbedcrypto mbedx509 mbedtls)
@@ -84,11 +89,26 @@ add_subdirectory(
   "${CMAKE_CURRENT_BINARY_DIR}/libdatachannel"
 )
 
+# CMake regenerates cmake_install.cmake during the generate phase, so overwrite
+# vendored install scripts on every build (before Flutter's INSTALL step).
+set(_scomm_empty_install "${SCOMM_NATIVE_ROOT}/empty_install.cmake")
+add_custom_target(scomm_neuter_native_install ALL
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_scomm_empty_install}"
+    "${CMAKE_CURRENT_BINARY_DIR}/mbedtls/cmake_install.cmake"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_scomm_empty_install}"
+    "${CMAKE_CURRENT_BINARY_DIR}/libdatachannel/cmake_install.cmake"
+  COMMENT "Disable mbedtls/libdatachannel install rules for Flutter bundling"
+  VERBATIM
+)
+
 if(NOT TARGET datachannel)
   message(FATAL_ERROR "libdatachannel did not create target 'datachannel'")
 endif()
 
 set_target_properties(datachannel PROPERTIES OUTPUT_NAME "datachannel")
+add_dependencies(scomm_neuter_native_install datachannel)
 
 if(ANDROID)
   # Android 15 16 KB page size
