@@ -21,15 +21,28 @@ rootProject.allprojects {
 
 apply plugin: "com.android.library"
 
+def prebuiltRoot = file("${project.projectDir}/../native/prebuilt")
+def forceSource = (System.getenv("SCOMM_FORCE_SOURCE") ?: "0") != "0"
+def androidJni = file("${prebuiltRoot}/android-jni")
+def usePrebuilt = !forceSource &&
+        file("${androidJni}/arm64-v8a/libdatachannel.so").exists() &&
+        file("${androidJni}/x86_64/libdatachannel.so").exists()
+
+if (usePrebuilt) {
+    println("scommconnector: using Android prebuilts from ${androidJni}")
+}
+
 android {
     namespace = "ai.scomm.scommconnector"
 
     compileSdk = 36
     ndkVersion = android.ndkVersion
 
-    externalNativeBuild {
-        cmake {
-            path = "../src/CMakeLists.txt"
+    if (!usePrebuilt) {
+        externalNativeBuild {
+            cmake {
+                path = "../src/CMakeLists.txt"
+            }
         }
     }
 
@@ -41,21 +54,31 @@ android {
     defaultConfig {
         minSdk = 24
 
-        externalNativeBuild {
-            cmake {
-                cppFlags "-std=c++17 -frtti -fexceptions"
-                arguments "-DANDROID_STL=c++_shared",
-                        "-DNO_MEDIA=ON",
-                        "-DNO_WEBSOCKET=ON",
-                        "-DUSE_MBEDTLS=ON",
-                        "-DNO_EXAMPLES=ON",
-                        "-DNO_TESTS=ON"
+        if (!usePrebuilt) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-std=c++17 -frtti -fexceptions"
+                    arguments "-DANDROID_STL=c++_shared",
+                            "-DNO_MEDIA=ON",
+                            "-DNO_WEBSOCKET=ON",
+                            "-DUSE_MBEDTLS=ON",
+                            "-DNO_EXAMPLES=ON",
+                            "-DNO_TESTS=ON"
+                }
             }
         }
 
         ndk {
             // Match secMail10 / openssl-dart supported ABIs.
             abiFilters "arm64-v8a", "x86_64"
+        }
+    }
+
+    if (usePrebuilt) {
+        sourceSets {
+            main {
+                jniLibs.srcDirs += ["${androidJni}"]
+            }
         }
     }
 }

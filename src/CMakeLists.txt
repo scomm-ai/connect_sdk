@@ -3,6 +3,9 @@
 #   Android/Linux (shared) → libdatachannel.so
 #   Windows (shared)       → datachannel.dll
 #   Apple (static)         → libdatachannel.a (via tool/build_libdatachannel_apple.sh)
+#
+# Prefer native/prebuilt/<triple>/ when present (see native/prebuilt/README.md).
+# Force source: -DSCOMM_FORCE_SOURCE=ON or env SCOMM_FORCE_SOURCE=1
 
 cmake_minimum_required(VERSION 3.19)
 project(scommconnector_native LANGUAGES C CXX)
@@ -25,6 +28,13 @@ set(SCOMM_NATIVE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SCOMM_PKG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(LIBDATACHANNEL_SRC "${SCOMM_PKG_ROOT}/third_party/libdatachannel")
 set(MBEDTLS_SRC "${SCOMM_PKG_ROOT}/third_party/mbedtls")
+
+include("${SCOMM_NATIVE_ROOT}/ScommPrebuilt.cmake")
+if(SCOMM_USING_PREBUILT)
+  message(STATUS
+    "scommconnector: datachannel ready (prebuilt triple=${SCOMM_PREBUILT_TRIPLE})")
+  return()
+endif()
 
 # Keep Mbed TLS (+ everest/p256m) static so only datachannel.dll must be bundled,
 # and Windows multi-config import libs stay consistent.
