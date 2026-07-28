@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build static libdatachannel for iOS or macOS (run from package root via CocoaPods script phase).
+# Uses native/prebuilt/<triple>/libdatachannel.a when present unless SCOMM_FORCE_SOURCE is set.
 set -euo pipefail
 
 TARGET="${1:-ios}"
@@ -7,6 +8,40 @@ CONFIG="${2:-Release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/apple"
 SRC="$ROOT/src"
+
+use_prebuilt() {
+  local src="$1"
+  if [[ -n "${SCOMM_FORCE_SOURCE:-}" && "${SCOMM_FORCE_SOURCE}" != "0" ]]; then
+    return 1
+  fi
+  [[ -f "$src" ]]
+}
+
+PREBUILT=""
+case "$TARGET" in
+  ios)
+    PREBUILT="$ROOT/native/prebuilt/ios-arm64/libdatachannel.a"
+    ;;
+  macos)
+    ARCH="$(uname -m)"
+    if [[ "$ARCH" == "arm64" ]]; then
+      PREBUILT="$ROOT/native/prebuilt/macos-arm64/libdatachannel.a"
+    else
+      PREBUILT="$ROOT/native/prebuilt/macos-x86_64/libdatachannel.a"
+    fi
+    ;;
+  *)
+    echo "Unknown target: $TARGET (expected ios|macos)" >&2
+    exit 1
+    ;;
+esac
+
+if use_prebuilt "$PREBUILT"; then
+  mkdir -p "$OUT/lib"
+  cp -f "$PREBUILT" "$OUT/lib/libdatachannel.a"
+  echo "Using prebuilt $PREBUILT -> $OUT/lib/libdatachannel.a"
+  exit 0
+fi
 
 if [[ ! -f "$ROOT/third_party/libdatachannel/CMakeLists.txt" ]]; then
   git -C "$ROOT" submodule update --init --recursive
@@ -25,6 +60,7 @@ CMAKE_ARGS=(
   -B "$BUILD_DIR"
   -DCMAKE_BUILD_TYPE="$CONFIG"
   -DSCOMM_BUILD_SHARED=OFF
+  -DSCOMM_FORCE_SOURCE=ON
   -DNO_MEDIA=ON
   -DNO_WEBSOCKET=ON
   -DUSE_MBEDTLS=ON
@@ -45,9 +81,6 @@ if [[ "$TARGET" == "ios" ]]; then
   fi
 elif [[ "$TARGET" == "macos" ]]; then
   CMAKE_ARGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15)
-else
-  echo "Unknown target: $TARGET (expected ios|macos)" >&2
-  exit 1
 fi
 
 cmake "${CMAKE_ARGS[@]}"

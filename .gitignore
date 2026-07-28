@@ -33,6 +33,9 @@ doc/api/
 
 # Native libdatachannel build output
 native/build/
+native/prebuilt-dist/
+native/prebuilt/**
+!native/prebuilt/README.md
 src/../build/
 build/
 third_party/libdatachannel/build/

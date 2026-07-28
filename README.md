@@ -48,6 +48,19 @@ This package is a Flutter **FFI plugin**. It builds and bundles
 | Linux    | `libdatachannel.so` (CMake) |
 | iOS / macOS | static `libdatachannel.a` via CocoaPods script |
 
+### Prebuilt binaries (preferred in CI)
+
+App CI should download release assets instead of compiling mbedtls + libdatachannel:
+
+```sh
+./tool/download_native_prebuilts.sh   # tag from native/PREBUILT_TAG
+```
+
+CMake/Gradle/CocoaPods auto-use `native/prebuilt/<triple>/` when present.
+Force a source build with `SCOMM_FORCE_SOURCE=1`. See [`native/prebuilt/README.md`](native/prebuilt/README.md).
+
+Publish new assets via `.github/workflows/native-prebuilts.yml` (`native-v*` tags or workflow_dispatch).
+
 After changing native code:
 
 ```sh
@@ -60,6 +73,7 @@ flutter run
 
 ```powershell
 git submodule update --init --recursive
+.\tool\ensure_mbedtls.ps1
 .\tool\build_libdatachannel.ps1
 ```
 
@@ -67,7 +81,7 @@ Override the library path with `LIBDATACHANNEL_PATH` if needed.
 
 ### Branch
 
-Development for this migration lives on `feature/libdatachannel-ffi`.
+Development for this migration lives on `feature/libdatachannel-ffi` (prebuilts on `feat/native-prebuilts`).
 
 ## Basic Setup
 

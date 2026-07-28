@@ -1,0 +1,214 @@
+name: Native prebuilts (libdatachannel)
+
+on:
+  push:
+    tags:
+      - "native-v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag to create/update (e.g. native-v1.0.0)"
+        required: true
+        default: "native-v1.0.0"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+jobs:
+  windows-x86_64:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Ensure mbedtls
+        shell: pwsh
+        run: ./tool/ensure_mbedtls.ps1
+
+      - name: Configure & build
+        shell: pwsh
+        run: |
+          cmake -S src -B build-win `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DSCOMM_FORCE_SOURCE=ON `
+            -DSCOMM_BUILD_SHARED=ON
+          cmake --build build-win --config Release --parallel
+          $dll = Get-ChildItem build-win -Recurse -Filter datachannel.dll |
+            Where-Object { $_.FullName -match '\\Release\\' -or $_.DirectoryName -match 'Release' } |
+            Select-Object -First 1
+          if (-not $dll) {
+            $dll = Get-ChildItem build-win -Recurse -Filter datachannel.dll | Select-Object -First 1
+          }
+          if (-not $dll) { throw "datachannel.dll not found" }
+          Write-Host "Built $($dll.FullName)"
+          ./tool/stage_native_prebuilt.ps1 -Triple windows-x86_64 -Library $dll.FullName
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datachannel-windows-x86_64
+          path: native/prebuilt-dist/datachannel-windows-x86_64.zip
+
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zip
+
+      - name: Ensure mbedtls
+        run: bash tool/ensure_mbedtls.sh
+
+      - name: Configure & build
+        run: |
+          cmake -S src -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSCOMM_FORCE_SOURCE=ON \
+            -DSCOMM_BUILD_SHARED=ON
+          cmake --build build-linux --parallel
+          SO=$(find build-linux -name 'libdatachannel.so' | head -n 1)
+          test -n "$SO"
+          bash tool/stage_native_prebuilt.sh linux-x86_64 "$SO"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datachannel-linux-x86_64
+          path: native/prebuilt-dist/datachannel-linux-x86_64.zip
+
+  macos-arm64:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Ensure mbedtls
+        run: bash tool/ensure_mbedtls.sh
+
+      - name: Build static (Apple)
+        run: |
+          export SCOMM_FORCE_SOURCE=1
+          bash tool/build_libdatachannel_apple.sh macos Release
+          test -f build/apple/lib/libdatachannel.a
+          bash tool/stage_native_prebuilt.sh macos-arm64 build/apple/lib/libdatachannel.a
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datachannel-macos-arm64
+          path: native/prebuilt-dist/datachannel-macos-arm64.zip
+
+  ios-arm64:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Ensure mbedtls
+        run: bash tool/ensure_mbedtls.sh
+
+      - name: Build static (iOS)
+        run: |
+          export SCOMM_FORCE_SOURCE=1
+          bash tool/build_libdatachannel_apple.sh ios Release
+          test -f build/apple/lib/libdatachannel.a
+          bash tool/stage_native_prebuilt.sh ios-arm64 build/apple/lib/libdatachannel.a
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datachannel-ios-arm64
+          path: native/prebuilt-dist/datachannel-ios-arm64.zip
+
+  android-abis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build zip
+
+      - name: Ensure mbedtls
+        run: bash tool/ensure_mbedtls.sh
+
+      - name: Configure & build ${{ matrix.abi }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          ABI="${{ matrix.abi }}"
+          cmake -S src -B "build-android-$ABI" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="$ABI" \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_shared \
+            -DSCOMM_FORCE_SOURCE=ON \
+            -DSCOMM_BUILD_SHARED=ON
+          cmake --build "build-android-$ABI" --parallel
+          SO=$(find "build-android-$ABI" -name 'libdatachannel.so' | head -n 1)
+          test -n "$SO"
+          bash tool/stage_native_prebuilt.sh "android-$ABI" "$SO"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datachannel-android-${{ matrix.abi }}
+          path: native/prebuilt-dist/datachannel-android-${{ matrix.abi }}.zip
+
+  publish:
+    needs: [windows-x86_64, linux-x86_64, macos-arm64, ios-arm64, android-abis]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: datachannel-*
+          merge-multiple: true
+
+      - name: List assets
+        run: find dist -type f -print
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Native libdatachannel ${{ env.RELEASE_TAG }}
+          body: |
+            Prebuilt libdatachannel (+ statically linked mbedtls) for scommconnector.
+
+            Install into a checkout / pub-cache copy:
+            ```bash
+            ./tool/download_native_prebuilts.sh ${{ env.RELEASE_TAG }}
+            ```
+          files: dist/*.zip
+          fail_on_unmatched_files: true
