@@ -81,7 +81,7 @@ Override the library path with `LIBDATACHANNEL_PATH` if needed.
 
 ### Branch
 
-Development for this migration lives on `feature/libdatachannel-ffi` (prebuilts on `feat/native-prebuilts`).
+Native libdatachannel FFI + prebuilts live on **`main`**.
 
 ## Basic Setup
 
