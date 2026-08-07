@@ -70,7 +70,9 @@ class RequestMatcher implements IRequestMatcher {
       );
       return true;
     }
-    warningLog(
+    // Late/duplicate responses are common after timeout or when the callee also
+    // sees the ConnectionResponse envelope — not a datachannel failure.
+    debugLog(
       'No pending request found to complete for requestId=$requestId.',
     );
     return false;

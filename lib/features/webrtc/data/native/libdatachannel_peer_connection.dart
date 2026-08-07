@@ -24,6 +24,7 @@ class LibDataChannelPeerConnection {
   final LibDataChannelBindings _bindings;
 
   final Map<String, int> _dataChannels = {};
+  final Map<String, Completer<void>> _dataChannelOpen = {};
   final List<_NativeCallbackHandle> _callbackHandles = [];
 
   final _connectionStateController =
@@ -155,14 +156,18 @@ class LibDataChannelPeerConnection {
           Pointer<Void> ptr,
         ) {
           if (_closed) return;
-          final completer = _localDescriptionCompleter;
-          if (completer == null || completer.isCompleted) return;
-          completer.complete(
-            WebRtcSessionDescription(
-              type: type == nullptr ? 'offer' : type.toDartString(),
-              sdp: sdp == nullptr ? '' : sdp.toDartString(),
-            ),
-          );
+          try {
+            final completer = _localDescriptionCompleter;
+            if (completer == null || completer.isCompleted) return;
+            completer.complete(
+              WebRtcSessionDescription(
+                type: type == nullptr ? 'offer' : _safeNativeUtf8(type),
+                sdp: sdp == nullptr ? '' : _safeNativeUtf8(sdp),
+              ),
+            );
+          } catch (_) {
+            // Native callbacks must not throw into the Dart zone.
+          }
         });
     _callbackHandles.add(_NativeCallbackHandle(descCb));
     _check(
@@ -178,15 +183,19 @@ class LibDataChannelPeerConnection {
           Pointer<Void> ptr,
         ) {
           if (_closed || cand == nullptr) return;
-          final raw = cand.toDartString();
-          if (raw.isEmpty) return;
-          _localIceController.add(
-            WebRtcIceCandidate(
-              candidate: _candidateToSignal(raw),
-              sdpMid: mid == nullptr ? null : mid.toDartString(),
-              sdpMLineIndex: 0,
-            ),
-          );
+          try {
+            final raw = _safeNativeUtf8(cand);
+            if (raw.isEmpty) return;
+            _localIceController.add(
+              WebRtcIceCandidate(
+                candidate: _candidateToSignal(raw),
+                sdpMid: mid == nullptr ? null : _safeNativeUtf8(mid),
+                sdpMLineIndex: 0,
+              ),
+            );
+          } catch (_) {
+            // Native callbacks must not throw into the Dart zone.
+          }
         });
     _callbackHandles.add(_NativeCallbackHandle(candCb));
     _check(
@@ -345,11 +354,15 @@ class LibDataChannelPeerConnection {
       );
     }
 
-    final dataPtr = message.toNativeUtf8();
+    await _waitUntilDataChannelOpen(channelLabel, dc);
+
+    final bytes = utf8.encode(message);
+    final dataPtr = malloc<Uint8>(bytes.length);
     try {
-      // Negative size => null-terminated UTF-8 string.
+      dataPtr.asTypedList(bytes.length).setAll(0, bytes);
+      // size >= 0 => binary frame (stable across peers; avoids string/binary mismatch).
       _check(
-        _bindings.rtcSendMessage(dc, dataPtr, -1),
+        _bindings.rtcSendMessage(dc, dataPtr.cast<Utf8>(), bytes.length),
         'rtcSendMessage',
       );
     } finally {
@@ -395,6 +408,12 @@ class LibDataChannelPeerConnection {
       _bindings.rtcDeleteDataChannel(dc);
     }
     _dataChannels.clear();
+    for (final open in _dataChannelOpen.values) {
+      if (!open.isCompleted) {
+        open.completeError(StateError('Data channel closed'));
+      }
+    }
+    _dataChannelOpen.clear();
 
     _bindings.rtcClosePeerConnection(pcId);
     _bindings.rtcDeletePeerConnection(pcId);
@@ -425,6 +444,26 @@ class LibDataChannelPeerConnection {
     if (label == null || label.isEmpty) return;
 
     _dataChannels[label] = dc;
+    _dataChannelOpen.putIfAbsent(label, Completer<void>.new);
+    if (_bindings.rtcIsOpen(dc)) {
+      final open = _dataChannelOpen[label];
+      if (open != null && !open.isCompleted) {
+        open.complete();
+      }
+    }
+
+    final openCb = NativeCallable<RtcOpenCallbackNative>.listener((
+      int id,
+      Pointer<Void> ptr,
+    ) {
+      if (_closed) return;
+      final open = _dataChannelOpen[label];
+      if (open != null && !open.isCompleted) {
+        open.complete();
+      }
+    });
+    _callbackHandles.add(_NativeCallbackHandle(openCb));
+    _bindings.rtcSetOpenCallback(dc, openCb.nativeFunction);
 
     final messageCb =
         NativeCallable<RtcMessageCallbackNative>.listener((
@@ -434,22 +473,57 @@ class LibDataChannelPeerConnection {
           Pointer<Void> ptr,
         ) {
           if (_closed || message == nullptr) return;
-
-          late final String value;
-          if (size >= 0) {
-            final bytes = message.cast<Uint8>().asTypedList(size);
-            value = utf8.decode(Uint8List.fromList(bytes), allowMalformed: true);
-          } else {
-            // Negative size includes the terminating NUL.
-            value = message.toDartString();
+          try {
+            final value = _decodeDataChannelMessage(message, size);
+            _dataMessageController.add(
+              WebRtcDataMessage(channelLabel: label, message: value),
+            );
+          } catch (_) {
+            // Native callbacks must not throw into the Dart zone.
           }
-
-          _dataMessageController.add(
-            WebRtcDataMessage(channelLabel: label, message: value),
-          );
         });
     _callbackHandles.add(_NativeCallbackHandle(messageCb));
     _bindings.rtcSetMessageCallback(dc, messageCb.nativeFunction);
+  }
+
+  Future<void> _waitUntilDataChannelOpen(String label, int dc) async {
+    if (_bindings.rtcIsOpen(dc)) {
+      final open = _dataChannelOpen[label];
+      if (open != null && !open.isCompleted) {
+        open.complete();
+      }
+      return;
+    }
+
+    final open = _dataChannelOpen.putIfAbsent(label, Completer<void>.new);
+    await open.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        throw TimeoutException(
+          'Timed out waiting for data channel "$label" to open',
+        );
+      },
+    );
+  }
+
+  static String _decodeDataChannelMessage(Pointer<Utf8> message, int size) {
+    if (size >= 0) {
+      final bytes = message.cast<Uint8>().asTypedList(size);
+      return utf8.decode(Uint8List.fromList(bytes), allowMalformed: true);
+    }
+    // Negative size includes the terminating NUL.
+    final byteLength = (-size) - 1;
+    if (byteLength <= 0) return '';
+    final bytes = message.cast<Uint8>().asTypedList(byteLength);
+    return utf8.decode(Uint8List.fromList(bytes), allowMalformed: true);
+  }
+
+  static String _safeNativeUtf8(Pointer<Utf8> ptr) {
+    try {
+      return ptr.toDartString();
+    } catch (_) {
+      return '';
+    }
   }
 
   static List<String> _buildIceServerUris(
