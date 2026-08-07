@@ -1,13 +1,13 @@
-import 'package:get_it/get_it.dart';
 import 'package:scommconnector/core/config/grpc_client.dart';
 import 'package:scommconnector/core/di/service_locator.dart';
+import 'package:scommconnector/core/di/scomm_service_builder.dart';
 import 'package:scommconnector/core/resilience/online_aware_resilience.dart';
 import 'package:scommconnector/features/signaling/domain/usecases/watch_connection_status_usecase.dart';
 import 'package:scommconnector/features/signaling/domain/usecases/watch_signaling_messages_uscase.dart';
 import 'package:scommconnector/features/signaling/signaling.dart';
 
 Future<void> signalingDI(
-  GetIt sl,
+  ScommServiceBuilder sl,
   String host,
   int port,
   bool useTls,

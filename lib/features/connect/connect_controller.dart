@@ -362,11 +362,13 @@ class ConnectController {
 
     ScommDiagLog.connect('incoming_webrtc_init', {
       'sessionId': sessionId,
-      'channels': _configuredDataChannels.length,
+      'channels': 0,
     });
+    // Answerer must NOT create data channels — only the offerer creates them.
+    // Pre-creating here races libdatachannel negotiation and breaks `main`.
     await webRtcController.initialize(
       sessionId: sessionId,
-      dataChannels: _configuredDataChannels,
+      dataChannels: const [],
       iceServers: _configuredIceServers,
     );
 

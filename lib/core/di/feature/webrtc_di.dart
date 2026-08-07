@@ -1,11 +1,11 @@
-import 'package:get_it/get_it.dart';
+import 'package:scommconnector/core/di/scomm_service_builder.dart';
 import 'package:scommconnector/features/webrtc/application/webrtc_manager.dart';
 import 'package:scommconnector/features/webrtc/data/services/webrtc_ice_route_monitor.dart';
 import 'package:scommconnector/features/webrtc/data/services/webrtc_ice_route_stats_parser.dart';
 import 'package:scommconnector/features/webrtc/domain/usecases/connection_state_usecase.dart';
 import 'package:scommconnector/features/webrtc/webrtc.dart';
 
-Future<void> webrtcDI(GetIt sl) async {
+Future<void> webrtcDI(ScommServiceBuilder sl) async {
   /// Stateless shared service
   sl.registerLazySingleton<WebRtcIceRouteStatsParser>(
     WebRtcIceRouteStatsParser.new,

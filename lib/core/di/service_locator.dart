@@ -1,11 +1,11 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:get_it/get_it.dart';
 import 'package:scommconnector/core/auth/signaling_access_token_provider.dart';
 import 'package:scommconnector/core/di/feature/auth_di.dart';
 import 'package:scommconnector/core/di/feature/connect_di.dart';
 import 'package:scommconnector/core/di/feature/identity_id.dart';
 import 'package:scommconnector/core/di/feature/signaling_di.dart';
 import 'package:scommconnector/core/di/feature/webrtc_di.dart';
+import 'package:scommconnector/core/di/scomm_service_builder.dart';
 import 'package:scommconnector/core/logging/log.dart';
 import 'package:scommconnector/features/auth/application/controllers/auth_controller.dart';
 import 'package:scommconnector/features/connect/connect_controller.dart';
@@ -14,7 +14,7 @@ import 'package:scommconnector/features/signaling/signaling.dart';
 import 'package:scommconnector/features/webrtc/webrtc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-final scommDi = GetIt.instance;
+final scommDi = ScommServiceBuilder();
 
 Future<void> setupDependencies({
   required String host,

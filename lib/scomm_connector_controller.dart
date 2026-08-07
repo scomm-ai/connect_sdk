@@ -113,11 +113,11 @@ class ScommConnectorController {
   Stream<void> get stateChanges => _stateChangesController.stream;
 
   /// Returns whether the selected WebRTC session can currently send data.
+  /// Returns true when the selected WebRTC session can carry datachannel traffic.
+  /// Requires [WebRtcStatus.connected] — negotiating alone is not enough because
+  /// the SCTP data channel may not be open yet.
   bool _canSendDataChannel() {
-    final status = webrtcState.status;
-    return status == WebRtcStatus.connected ||
-        status == WebRtcStatus.negotiating ||
-        status == WebRtcStatus.retrying;
+    return webrtcState.status == WebRtcStatus.connected;
   }
 
   /// Emits a session state only when it differs from the current snapshot.
