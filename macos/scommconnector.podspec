@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'SComm' => 'dev@scomm.ai' }
   s.source           = { :path => '.' }
-  s.source_files     = 'Classes/**/*'
+  s.source_files     = 'scommconnector/Sources/scommconnector/**/*.{c,h}'
   s.dependency 'FlutterMacOS'
   s.platform = :osx, '10.15'
   s.swift_version = '5.0'

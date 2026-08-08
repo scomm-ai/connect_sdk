@@ -38,5 +38,11 @@ native/prebuilt/**
 !native/prebuilt/README.md
 src/../build/
 build/
+
+# Swift Package Manager
+**/.build/
+**/.swiftpm/
+!**/.gitkeep
+
 third_party/libdatachannel/build/
 third_party/mbedtls/
