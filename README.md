@@ -26,7 +26,7 @@ For Git usage:
 dependencies:
   scommconnector:
     git:
-      url: https://github.com/dev10m-adv/scommconnector_flutter
+      url: https://github.com/scomm-ai/connect_sdk
       ref: main
 ```
 
